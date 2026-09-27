@@ -5,7 +5,9 @@ by [Three.js](https://threejs.org/). No build step, no install, and it runs offl
 
 ## Play
 
-Just open `index.html` in a browser. Three.js is bundled in `vendor/`, so no internet
+**Online:** https://codexjdub.github.io/TowerDefense/
+
+**Locally:** open `index.html` in a browser. Three.js is bundled in `vendor/`, so no internet
 connection is needed. Requires a browser with WebGL.
 
 ## Features
