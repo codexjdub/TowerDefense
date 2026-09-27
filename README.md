@@ -10,7 +10,8 @@ connection is needed. Requires a browser with WebGL.
 
 ## Features
 
-- **8 maps** — S-Curve, Zigzag, Serpentine, Switchback, Crown, Figure-8, Twisted, Spiral
+- **12 maps** — S-Curve, Zigzag, Serpentine, Switchback, Crown, Figure-8, Twisted, Spiral,
+  Descent, Horseshoe, Crossroads, Sprint
 - **3 difficulty modes** — Beginner, Normal, Veteran
 - **20 hand-crafted waves** + unlimited **Endless mode** with procedurally generated waves
 - **7 tower types:**

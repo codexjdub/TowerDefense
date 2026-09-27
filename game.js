@@ -250,21 +250,7 @@ canvas.addEventListener('mousemove', e => {
   updateHoverTile();
 
   // Menu hover detection
-  if (state.phase === 'menu') {
-    const perRow = Math.min(4, MAP_CONFIGS.length);
-    const cardW = 210, cardH = 172, gapX = 18, gapY = 14;
-    const rowW  = perRow * cardW + (perRow - 1) * gapX;
-    const sx    = (CANVAS_W - rowW) / 2;
-    const sy    = 164;
-    let hit = -1;
-    MAP_CONFIGS.forEach((_, i) => {
-      const col = i % perRow, row = Math.floor(i / perRow);
-      const cx  = sx + col * (cardW + gapX);
-      const cy  = sy + row * (cardH + gapY);
-      if (mx >= cx && mx <= cx + cardW && my >= cy && my <= cy + cardH) hit = i;
-    });
-    state.menuHover = hit;
-  }
+  if (state.phase === 'menu') state.menuHover = menuCardAt(mx, my);
 
   // Cursor style
   if (mx >= UI_X)                      canvas.style.cursor = 'pointer';
@@ -353,11 +339,8 @@ function handleClick(mx, my, tile) {
   if (state.phase === 'menu') {
     // Resume saved game button (shown in leaderboard area when save exists)
     // Position matches drawLeaderboardPreview: cx=CANVAS_W/2, button at cx-180 to cx+180
-    // The leaderboard y = startY + rows*(cardH+gapY)+16
     if (hasSave()) {
-      const perRow = Math.min(4, MAP_CONFIGS.length);
-      const rows   = Math.ceil(MAP_CONFIGS.length / perRow);
-      const lbY    = 164 + rows * (172 + 14) + 16;
+      const lbY = menuCardsBottom();
       if (mx >= CANVAS_W / 2 - 180 && mx <= CANVAS_W / 2 + 180 &&
           my >= lbY && my <= lbY + 28) {
         resumeGame(); return;
@@ -390,17 +373,8 @@ function handleClick(mx, my, tile) {
     }
 
     // Map cards
-    const perRow = Math.min(4, MAP_CONFIGS.length);
-    const cardW = 210, cardH = 172, gapX = 18, gapY = 14;
-    const rowW  = perRow * cardW + (perRow - 1) * gapX;
-    const sx    = (CANVAS_W - rowW) / 2;
-    const sy    = 164;
-    MAP_CONFIGS.forEach((_, i) => {
-      const col = i % perRow, row = Math.floor(i / perRow);
-      const cx  = sx + col * (cardW + gapX);
-      const cy  = sy + row * (cardH + gapY);
-      if (mx >= cx && mx <= cx + cardW && my >= cy && my <= cy + cardH) selectMap(i);
-    });
+    const card = menuCardAt(mx, my);
+    if (card >= 0) selectMap(card);
     return;
   }
 

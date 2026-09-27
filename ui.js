@@ -413,6 +413,32 @@ function drawPauseOverlay(ctx) {
 }
 
 // ─── Map selection screen ─────────────────────────────────────────────────────
+// Map-card grid. Drawing, hover and click detection all go through these helpers.
+const MENU_CARDS = { w: 210, h: 172, gapX: 18, gapY: 14, y: 164, perRow: Math.min(6, MAP_CONFIGS.length) };
+
+function menuCardPos(i) {
+  const { w, h, gapX, gapY, y, perRow } = MENU_CARDS;
+  const rowW = perRow * w + (perRow - 1) * gapX;
+  return {
+    x: (CANVAS_W - rowW) / 2 + (i % perRow) * (w + gapX),
+    y: y + Math.floor(i / perRow) * (h + gapY),
+  };
+}
+
+// Index of the map card under (mx, my), or -1
+function menuCardAt(mx, my) {
+  return MAP_CONFIGS.findIndex((_, i) => {
+    const p = menuCardPos(i);
+    return mx >= p.x && mx <= p.x + MENU_CARDS.w && my >= p.y && my <= p.y + MENU_CARDS.h;
+  });
+}
+
+// Top of the resume button / leaderboard, below the last row of cards
+function menuCardsBottom() {
+  const rows = Math.ceil(MAP_CONFIGS.length / MENU_CARDS.perRow);
+  return MENU_CARDS.y + rows * (MENU_CARDS.h + MENU_CARDS.gapY) + 20;
+}
+
 function drawMenuScreen(ctx, state) {
   ctx.fillStyle = 'rgba(10,10,25,0.78)';   // lets the 3D map show through faintly
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
@@ -461,16 +487,9 @@ function drawMenuScreen(ctx, state) {
     ctx.fillText('Waves never end \u2014 enemies scale each tier', CANVAS_W / 2, eby + eBtnH + 10);
   }
 
-  const perRow  = Math.min(4, MAP_CONFIGS.length);
-  const cardW   = 210, cardH = 172, gapX = 18, gapY = 14;
-  const rowW    = perRow * cardW + (perRow - 1) * gapX;
-  const startX  = (CANVAS_W - rowW) / 2;
-  const startY  = 164;
-
+  const cardW = MENU_CARDS.w, cardH = MENU_CARDS.h;
   MAP_CONFIGS.forEach((cfg, i) => {
-    const col   = i % perRow, row = Math.floor(i / perRow);
-    const cx    = startX + col * (cardW + gapX);
-    const cy    = startY + row * (cardH + gapY);
+    const { x: cx, y: cy } = menuCardPos(i);
     const hover = state.menuHover === i;
 
     btn(ctx, cx, cy, cardW, cardH,
@@ -498,8 +517,7 @@ function drawMenuScreen(ctx, state) {
     }
   });
 
-  const rows = Math.ceil(MAP_CONFIGS.length / perRow);
-  drawLeaderboardPreview(ctx, CANVAS_W / 2, startY + rows * (cardH + gapY) + 20);
+  drawLeaderboardPreview(ctx, CANVAS_W / 2, menuCardsBottom());
   ctx.textAlign = 'left';
 }
 

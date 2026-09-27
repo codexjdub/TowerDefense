@@ -95,6 +95,46 @@ const MAP_CONFIGS = [
       {col:6,row:6},{col:12,row:6},{col:12,row:7},{col:19,row:7},
     ],
   },
+  {
+    name: 'Descent',
+    difficulty: 'Easy',
+    diffColor: '#2ecc71',
+    desc: 'Enters from the north.\nThree long sweeps down.',
+    waypoints: [
+      {col:2,row:0},{col:2,row:2},{col:17,row:2},{col:17,row:6},
+      {col:4,row:6},{col:4,row:10},{col:15,row:10},{col:15,row:13},
+    ],
+  },
+  {
+    name: 'Horseshoe',
+    difficulty: 'Medium',
+    diffColor: '#f39c12',
+    desc: 'In and out the same side.\nCover both arms at once.',
+    waypoints: [
+      {col:0,row:2},{col:16,row:2},{col:16,row:11},{col:0,row:11},
+    ],
+  },
+  {
+    name: 'Crossroads',
+    difficulty: 'Medium',
+    diffColor: '#f39c12',
+    desc: 'The road crosses itself twice.\nHold the junctions.',
+    waypoints: [
+      {col:0,row:8},{col:7,row:8},{col:7,row:3},{col:3,row:3},
+      {col:3,row:11},{col:17,row:11},{col:17,row:4},{col:14,row:4},
+      {col:14,row:13},
+    ],
+  },
+  {
+    name: 'Sprint',
+    difficulty: 'Expert',
+    diffColor: '#9b59b6',
+    desc: 'The shortest road in.\nEvery tower must count.',
+    waypoints: [
+      {col:0,row:11},{col:6,row:11},{col:6,row:6},{col:13,row:6},
+      {col:13,row:2},{col:19,row:2},
+    ],
+  },
 ];
 
 // ─── Active map state (mutable) ───────────────────────────────────────────────

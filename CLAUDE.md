@@ -192,6 +192,22 @@ Wave modifiers applied at spawn:
 
 Endless HP scaling: `scale = 1 + tier * ENDLESS_HP_SCALE` where `ENDLESS_HP_SCALE = 0.12`.
 
+## Maps
+
+`MAP_CONFIGS` in map.js: 12 maps, each `{ name, difficulty, diffColor, desc, waypoints }`.
+The difficulty label is display-only. Everything else (path tiles, 3D island, road,
+scenery, portal, castle, menu thumbnail) is derived from the waypoints. Rules for new maps:
+- Waypoints are tile coords (`col` 0–19, `row` 0–13); consecutive waypoints must share a
+  row or a column (straight segments only).
+- The first waypoint must be on a board edge with the first segment pointing away from
+  that edge, and the last must be on an edge with the last segment pointing toward it.
+  The portal and castle go in the border ring, one tile beyond the path's ends.
+- Keep a grass row/column between parallel segments, or they merge into a 2-wide road.
+  Crossings are fine (Spiral, Crossroads).
+- Append new maps at the end: saves store `mapIndex`, so reordering breaks them.
+- Entrances and exits can be on any edge. The default camera is set back far enough that
+  a portal or castle at the island's front corners stays in view.
+
 ## Waves
 
 `WAVES` array: 20 hand-crafted waves. Beyond that, `generateEndlessWave(waveIndex)`
@@ -262,7 +278,10 @@ Click detection mirrors drawing coordinates exactly (same constants, same math).
 
 Right mouse: drag orbits the camera; a click without dragging cancels placement/selection.
 
-Menu map cards: `perRow=4`, `cardW=210`, `cardH=172`, `gapX=18`, `gapY=14`, `startY=164`.
+Menu map cards: laid out by `MENU_CARDS` in ui.js (`perRow=6`, `w=210`, `h=172`, `gapX=18`,
+`gapY=14`, `y=164`). Drawing, hover and clicks all use `menuCardPos(i)`, `menuCardAt(mx, my)`
+and `menuCardsBottom()` (top of the resume button / leaderboard). 12 maps fill two rows;
+a 13th map starts a third row, which pushes the leaderboard near the bottom edge.
 
 Tower info panel height = 236px. Priority buttons at `iy+105`, upgrade at `iy+159`,
 sell at `iy+194`. Two-click sell confirmation with 2.5s timeout.

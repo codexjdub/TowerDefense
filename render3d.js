@@ -1239,8 +1239,10 @@ const Render3D = (() => {
   }
 
   // ─── Camera: fixed angle by default, right-drag to orbit, wheel to zoom ────
-  // The game area is always letterboxed to 1280×896, so one framing fits every window
-  const HOME = { tx: 0, ty: 0, tz: 0.6, r: 32, th: 0, ph: 0.8 };
+  // The game area is always letterboxed to 1280×896, so one framing fits every window.
+  // r is just far enough back to keep the island's front corners — and a portal or castle
+  // standing there — inside the view.
+  const HOME = { tx: 0, ty: 0, tz: 0.6, r: 34.5, th: 0, ph: 0.8 };
   const cam = Object.assign({}, HOME), goal = Object.assign({}, HOME);
   function resetCamera() {
     Object.assign(goal, HOME, { th: Math.round(cam.th / TAU) * TAU });
