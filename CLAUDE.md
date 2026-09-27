@@ -329,3 +329,18 @@ Leaderboard: `saveScore()` / `getScores()` → `'td_lb'` (top 10, regular).
   so adding/removing towers automatically adjusts all panel positions.
 - Any exception inside `draw()` stops the game loop (the next `requestAnimationFrame` is
   never scheduled), which looks like a freeze. Check the console first.
+  
+## Git identity and email privacy
+
+Never let a real email reach anything published — commit metadata included. Commit with the GitHub noreply address; the author name is free.
+
+```
+git -c user.name="<name>" -c user.email="$(gh api user -q '"\(.id)+\(.login)@users.noreply.github.com"')" commit -q -F - <<'EOF'
+```
+
+`git config user.email` is usually already the noreply form; overriding it with a "real" address is how the leak happens. Check before committing and after pushing — the public API is what counts, not the local repo:
+
+```
+gh api "repos/<owner>/<repo>/commits?per_page=100&sha=main" -q '.[].commit.author.email' | sort -u
+```
+
