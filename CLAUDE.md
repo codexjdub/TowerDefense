@@ -74,8 +74,10 @@ CANVAS_H  = 896      (ROWS*TILE_SIZE)
 UI panel starts at `UI_X = COLS * TILE_SIZE = 1280`.
 
 These are *logical* sizes. `fitCanvas()` (game.js) scales both canvases to fill the window
-and sizes their backing stores at up to 2× devicePixelRatio; `draw()` applies
-`ctx.setTransform(renderScale, …)` so all 2D code keeps using logical coordinates.
+and sizes their backing stores at up to 2× devicePixelRatio (it also reruns when the
+pixel ratio changes); `draw()` applies `ctx.setTransform(renderScale, …)` so all 2D code
+keeps using logical coordinates. The WebGL buffer is further capped at ~4M pixels
+(`MAX_PIXELS` in render3d.js) so big HiDPI screens stay fast.
 
 Two stacked canvases:
 - `#scene3d` — WebGL, covers only the game area (logical 0–1280 × 0–896)
@@ -118,7 +120,7 @@ state.floatingTexts[]   // FloatingText instances (damage numbers)
 state.spawnQueue[]      // [{type, delay}] for current wave
 state.selectedTower     // Tower | null
 state.selectedTowerType // string | null (build mode)
-state.mouseCol/mouseRow // tile under the pointer (from the raycast), -1 when none
+state.mouseCol/mouseRow // tile under the pointer (raycast, re-picked every frame), -1 when none
 state.countdown         // seconds remaining in countdown phase
 state.waveModifier      // 'Armored' | 'Haste' | 'Swarm' | null
 state.paused, state.speed
@@ -146,21 +148,28 @@ Defined in `TOWER_DEFS` (towers.js). All 7 types:
 Range is stored in tile units in TOWER_DEFS; `tower.range` getter multiplies by TILE_SIZE.
 Upgrades: level 1→2 costs `cost*0.5`, level 2→3 costs `cost`. Max level 3.
 Sell value = `invested * 0.6`.
+`canPlaceTower(col, row, type)` (game.js) is the single placement rule, used by
+`placeTower()` and by the 3D placement preview.
 
 towers.js holds only data and logic (`Tower`, `Projectile`, `FloatingText`); all tower
 visuals are in render3d.js.
 
 **Laser** fires a continuous beam every frame (no projectile). Uses dot/cross product to
-test each enemy against the beam line. `tower.beamActive` drives the 3D beam.
+test each enemy against the beam line. `tower.beamActive` drives the 3D beam; game.js
+clears it on game over, since towers stop updating then.
 
 **Tesla** fires a burst then chains to up to 3 nearby enemies within `1.5*TILE_SIZE`.
 `TESLA_CHAIN_MULTS = [0.6, 0.35, 0.2]` — damage decay per hop.
 `tower.chainPoints` stores the bolt path; `tower.chainTimer` drives the visual fade (0.18s).
 
-**Animation timers** ticked in `Tower.update`, read by render3d.js:
+**Visual timers** (`flashTimer`, `recoilAnim`, `chainTimer`, `placementAnim`) are ticked
+only by `Tower.tickVisuals(dt, rawDt)`, which game.js calls every frame in every phase —
+`Tower.update` only runs during fights, so ticking them there left effects frozen on
+screen between waves. render3d.js reads them:
 - `recoilAnim = 0.12` on fire — the model's recoil group slides back by
   `(recoilAnim/0.12) * recoilDist` (per-type distance in render3d's `BUILD` table).
-- `placementAnim = 0.38` on placement — scale bounce 0 → 1.25 → 1.
+- `placementAnim = 0.38` on placement — scale bounce 0 → 1.25 → 1. Uses real time, so a
+  tower placed while paused still appears.
 
 **Per-tower stats:** `tower.totalDamage` and `tower.killCount`.
 Kill credit: `e.lastHitTower` is set on every hit; checked when enemy dies.
@@ -220,18 +229,20 @@ set, which `disposeTree()` skips.
 effects here rather than in game logic. Effect pools: `sparks` (Points), `debris`
 (InstancedMesh), `smoke` / `flashes` / `rings` / `decals` (sprite pools), `fireflies`.
 
-**Input:** `pickTile(clientX, clientY)` raycasts the grass, road and tower models and
-returns `{col, row}` or null. game.js wraps it in `tileAt()`, which returns null over the
-sidebar or the menu. `handleClick(mx, my, tile)` gets both the logical point (for UI) and
-the picked tile (for the map).
+**Input:** `pickTile(clientX, clientY)` raycasts the grass, road and tower models (ignoring
+glow sprites, which Three.js would hit even where transparent) and returns `{col, row}` or
+null. game.js wraps it in `tileAt()`, which returns null over the sidebar or the menu.
+`updateHoverTile()` re-picks the hovered tile from the last pointer position every frame,
+since the camera can move while the pointer doesn't. `handleClick(mx, my, tile)` gets both
+the logical point (for UI) and the picked tile (for the map).
 
 **Overlay:** `drawOverlay(ctx, state)` draws enemy HP bars (only once damaged; the boss
 always) and floating damage numbers on the 2D canvas at `project(x, y, h)` positions.
 
 **Camera:** eases `cam` toward `goal` (target, radius, azimuth `th`, polar `ph`).
-`HOME` is the default framing; `homeRadius()` pulls back on narrow windows. Right-drag →
-`orbit()`, wheel → `zoom()` (radius 9–40), `C` → `resetCamera()`. Once the player moves the
-camera, window resizes stop changing its radius. The menu shows a slow turntable (disabled
+`HOME` is the default framing; the game area's aspect ratio is fixed (letterboxed), so it
+fits every window. Right-drag → `orbit()`, wheel → `zoom()` (radius 9–40, wheel deltas
+normalized to pixels), `C` → `resetCamera()`. The menu shows a slow turntable (disabled
 under `prefers-reduced-motion`). `state.shake` offsets the camera.
 
 ## 2D Overlay / UI Rendering

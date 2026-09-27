@@ -33,6 +33,11 @@ function fitCanvas() {
   Render3D.resize(gameW, cssH, dpr);
 }
 window.addEventListener('resize', fitCanvas);
+// devicePixelRatio can also change without a resize, e.g. when the window moves to another monitor
+(function watchPixelRatio() {
+  matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
+    .addEventListener('change', () => { fitCanvas(); watchPixelRatio(); }, { once: true });
+})();
 fitCanvas();
 
 // ─── Game state factory ───────────────────────────────────────────────────────
@@ -169,6 +174,15 @@ function tileAt(clientX, clientY) {
   return Render3D.pickTile(clientX, clientY);
 }
 
+// Hovered tile. Re-picked every frame (from draw) as well as on pointer moves, because
+// the camera keeps moving after a zoom or orbit while the pointer stays still.
+let pointer = null;   // last pointer position over the canvas (client px), or null
+function updateHoverTile() {
+  const tile = pointer ? tileAt(pointer.x, pointer.y) : null;
+  state.mouseCol = tile ? tile.col : -1;
+  state.mouseRow = tile ? tile.row : -1;
+}
+
 // ─── Keyboard ─────────────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
   // Ignore if typing in an input
@@ -232,9 +246,8 @@ document.addEventListener('keydown', e => {
 // ─── Mouse events ─────────────────────────────────────────────────────────────
 canvas.addEventListener('mousemove', e => {
   const [mx, my] = canvasXY(e.clientX, e.clientY);
-  const tile = tileAt(e.clientX, e.clientY);
-  state.mouseCol = tile ? tile.col : -1;
-  state.mouseRow = tile ? tile.row : -1;
+  pointer = { x: e.clientX, y: e.clientY };
+  updateHoverTile();
 
   // Menu hover detection
   if (state.phase === 'menu') {
@@ -260,7 +273,7 @@ canvas.addEventListener('mousemove', e => {
   else                                 canvas.style.cursor = 'default';
 });
 
-canvas.addEventListener('mouseleave', () => { state.mouseCol = -1; state.mouseRow = -1; });
+canvas.addEventListener('mouseleave', () => { pointer = null; updateHoverTile(); });
 
 // ─── Camera: right-drag to orbit, wheel to zoom ───────────────────────────────
 // A right-click without dragging still cancels placement / selection.
@@ -271,12 +284,17 @@ function cancelSelection() {
   state.selectedTower     = null;
 }
 canvas.addEventListener('mousedown', e => {
+  // On a Mac contextmenu fires on mousedown, before a drag's mouseup sets this flag,
+  // so clear it here or it would swallow the next Ctrl-click
+  rightDragJustEnded = false;
   if (e.button !== 2) return;
   const [mx] = canvasXY(e.clientX, e.clientY);
   rightDrag = { x: e.clientX, y: e.clientY, moved: 0, orbit: mx < UI_X && state.phase !== 'menu' };
 });
 window.addEventListener('mousemove', e => {
   if (!rightDrag) return;
+  // Button released where we never saw the mouseup (e.g. after switching apps mid-drag)
+  if (!(e.buttons & 2)) { rightDrag = null; return; }
   const dx = e.clientX - rightDrag.x, dy = e.clientY - rightDrag.y;
   rightDrag.x = e.clientX; rightDrag.y = e.clientY;
   rightDrag.moved += Math.abs(dx) + Math.abs(dy);
@@ -288,7 +306,9 @@ window.addEventListener('mouseup', e => {
   if (!rightDragJustEnded) cancelSelection();
   rightDrag = null;
 });
-canvas.addEventListener('contextmenu', e => {
+// On window, not the canvas: Windows fires contextmenu wherever the button is released,
+// which can be the letterbox margin after a drag
+window.addEventListener('contextmenu', e => {
   e.preventDefault();
   if (!rightDrag && !rightDragJustEnded) cancelSelection();   // e.g. Ctrl-click on a Mac
   rightDragJustEnded = false;
@@ -297,7 +317,8 @@ canvas.addEventListener('wheel', e => {
   const [mx] = canvasXY(e.clientX, e.clientY);
   if (mx >= UI_X || state.phase === 'menu') return;
   e.preventDefault();
-  Render3D.zoom(e.deltaY);
+  // deltaY can be in lines or pages rather than pixels, depending on browser and device
+  Render3D.zoom(e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? window.innerHeight : 1));
 }, { passive: false });
 
 canvas.addEventListener('click', e => {
@@ -318,9 +339,8 @@ canvas.addEventListener('touchstart', e => {
 canvas.addEventListener('touchmove', e => {
   e.preventDefault();
   const t = e.touches[0];
-  const tile = tileAt(t.clientX, t.clientY);
-  state.mouseCol = tile ? tile.col : -1;
-  state.mouseRow = tile ? tile.row : -1;
+  pointer = { x: t.clientX, y: t.clientY };
+  updateHoverTile();
 }, { passive: false });
 
 canvas.addEventListener('touchend', e => { e.preventDefault(); }, { passive: false });
@@ -535,12 +555,17 @@ function handleTowerActionClick(mx, my) {
 }
 
 // ─── Tower placement ──────────────────────────────────────────────────────────
+// The one placement rule, also used by the 3D placement preview
+function canPlaceTower(col, row, type) {
+  return col >= 0 && col < COLS && row >= 0 && row < ROWS &&
+         !isPathTile(col, row) &&
+         !state.towers.some(t => t.col === col && t.row === row) &&
+         state.gold >= TOWER_DEFS[type].cost;
+}
+
 function placeTower(col, row) {
-  if (col < 0 || col >= COLS || row < 0 || row >= ROWS) return;
-  if (isPathTile(col, row)) return;
-  if (state.towers.find(t => t.col === col && t.row === row)) return;
+  if (!canPlaceTower(col, row, state.selectedTowerType)) return;
   const def = TOWER_DEFS[state.selectedTowerType];
-  if (state.gold < def.cost) return;
 
   state.gold -= def.cost;
   const tower = new Tower(state.selectedTowerType, col, row);
@@ -652,10 +677,8 @@ function update(rawDt) {
   }
   if (state.flashTimer > 0) state.flashTimer -= rawDt;
 
-  // Tick tower placement bounce animations (real-time, always — even in build/countdown)
-  for (const t of state.towers) {
-    if (t.placementAnim > 0) t.placementAnim = Math.max(0, t.placementAnim - rawDt);
-  }
+  // Tower visual timers (muzzle flash, recoil, lightning, placement bounce) — every phase
+  for (const t of state.towers) t.tickVisuals(dt, rawDt);
 
   if (state.phase === 'menu' || state.phase === 'gameover' || state.phase === 'victory') {
     tickParticles(rawDt);
@@ -754,6 +777,8 @@ function update(rawDt) {
 
     if (state.lives <= 0) {
       state.phase = 'gameover';
+      // Towers stop updating from here on, so switch off any Laser that was firing
+      for (const t of state.towers) t.beamActive = false;
       if (!state.scoreSaved) {
         if (state.endlessMode) saveEndlessScore(state);
         else saveScore(state);
@@ -850,6 +875,7 @@ function tickFloatingTexts(dt) {
 // The game area is rendered in 3D by Render3D (on #scene3d, underneath); this
 // 2D canvas is transparent over the map and draws the sidebar and overlays.
 function draw(rawDt) {
+  updateHoverTile();
   Render3D.render(state, rawDt);
 
   ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);

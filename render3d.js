@@ -661,10 +661,15 @@ const Render3D = (() => {
   const MOD_COL = { Armored: '#bdc3c7', Haste: '#e74c3c', Swarm: '#9b59b6' };
   const enemyViews = new Map();
   function buildEnemy(e) {
-    const mats = [];
+    // Each enemy owns its materials (they're tinted on hit / slow), one per distinct look
+    const mats = [], own = new Map();
     const M = (hex, opts = {}) => {
-      const m = new THREE.MeshPhongMaterial(Object.assign({ color: hex, flatShading: true, shininess: 35 }, opts));
-      m.userData.baseEm = m.emissive.clone(); mats.push(m); return m;
+      const key = hex + JSON.stringify(opts);
+      if (!own.has(key)) {
+        const m = new THREE.MeshPhongMaterial(Object.assign({ color: hex, flatShading: true, shininess: 35 }, opts));
+        m.userData.baseEm = m.emissive.clone(); mats.push(m); own.set(key, m);
+      }
+      return own.get(key);
     };
     const group = new THREE.Group(), body = new THREE.Group(); group.add(body);
     const v = { e, group, body, mats, parts: {}, barH: 0.8, yaw: -e.moveAngle, phase: Math.random() * 10 };
@@ -1060,7 +1065,7 @@ const Render3D = (() => {
     if (state.selectedTowerType) {
       if (!onBoard) return;
       const type = state.selectedTowerType, def = TOWER_DEFS[type];
-      const canPlace = !isPathTile(col, row) && !state.towers.some(t => t.col === col && t.row === row) && state.gold >= def.cost;
+      const canPlace = canPlaceTower(col, row, type);   // game.js
       const x = tileX(col), z = tileZ(row);
       tileMark.position.set(x, (isPathTile(col, row) ? 0 : GRASS_Y) + 0.012, z);
       tileMark.material.color.set(canPlace ? '#3498db' : '#e74c3c');
@@ -1100,7 +1105,7 @@ const Render3D = (() => {
       let v = towerViews.get(t);
       if (v && v.level !== t.level) { removeTower(v); towerViews.delete(t); v = null; }
       if (!v) v = buildTower(t);
-      // Placement bounce: 0 → 1.25 → 1 over 0.38s (placementAnim is ticked in game.js)
+      // Placement bounce: 0 → 1.25 → 1 over 0.38s (placementAnim is ticked in Tower.tickVisuals)
       let s = 1;
       if (t.placementAnim > 0) { const p = 1 - t.placementAnim / 0.38; s = p < 0.6 ? (p / 0.6) * 1.25 : 1.25 - ((p - 0.6) / 0.4) * 0.25; }
       v.root.scale.setScalar(Math.max(0.001, s));
@@ -1234,22 +1239,18 @@ const Render3D = (() => {
   }
 
   // ─── Camera: fixed angle by default, right-drag to orbit, wheel to zoom ────
-  const HOME = { tx: 0, ty: 0, tz: 0.6, r: 29.5, th: 0, ph: 0.8 };
+  // The game area is always letterboxed to 1280×896, so one framing fits every window
+  const HOME = { tx: 0, ty: 0, tz: 0.6, r: 32, th: 0, ph: 0.8 };
   const cam = Object.assign({}, HOME), goal = Object.assign({}, HOME);
-  let userMoved = false;   // true once the player orbits or zooms; resize then leaves the camera alone
-  function homeRadius() { const a = camera.aspect; return a < 1.55 ? HOME.r * Math.min(1.9, 1.55 / a) : HOME.r; }
   function resetCamera() {
-    Object.assign(goal, HOME, { r: homeRadius(), th: Math.round(cam.th / TAU) * TAU });
-    userMoved = false;
+    Object.assign(goal, HOME, { th: Math.round(cam.th / TAU) * TAU });
   }
   function orbit(dx, dy) {
     goal.th -= dx * 0.006;
     goal.ph = Math.min(1.25, Math.max(0.1, goal.ph - dy * 0.005));
-    userMoved = true;
   }
   function zoom(deltaY) {
     goal.r = Math.min(40, Math.max(9, goal.r * Math.exp(deltaY * 0.0012)));
-    userMoved = true;
   }
   function updateCamera(rawDt, state) {
     if (state.phase === 'menu' && !reduceMotion) goal.th += rawDt * 0.05;   // slow turntable behind the menu
@@ -1272,7 +1273,9 @@ const Render3D = (() => {
     raycaster.setFromCamera(_ndc, camera);
     const targets = [grassMesh, roadMesh];
     for (const v of towerViews.values()) targets.push(v.root);
-    const hit = raycaster.intersectObjects(targets, true)[0];
+    // Skip glow sprites: Three.js hits them even where they're transparent (or at opacity 0),
+    // which would make empty tiles next to a tower select the tower
+    const hit = raycaster.intersectObjects(targets, true).find(h => !h.object.isSprite);
     if (!hit) return null;
     const t = hit.object.userData.tower;
     if (t) return { col: t.col, row: t.row };
@@ -1337,8 +1340,7 @@ const Render3D = (() => {
     syncEnemies(state, dt, time);
     syncProjectiles(state, dt);
     updatePreview(state);
-    scene.updateMatrixWorld();
-    updateBeams(dt, time);
+    updateBeams(dt, time);   // tip.getWorldPosition updates its own ancestors; render() updates the rest
     sparks.update(dt); debris.update(dt); smoke.update(dt); flashes.update(dt); rings.update(dt); decals.update(dt);
     fireflies.update(time);
     if (dt > 0) {
@@ -1353,11 +1355,13 @@ const Render3D = (() => {
     }
     renderer.render(scene, camera);
   }
+  // Cap the drawing buffer so large HiDPI screens (e.g. 5K, ~10M px) don't make the GPU
+  // shade far more pixels than it needs every frame
+  const MAX_PIXELS = 4e6;
   function resize(cssW, cssH, dpr) {
-    renderer.setPixelRatio(dpr);
+    renderer.setPixelRatio(Math.min(dpr, Math.sqrt(MAX_PIXELS / (cssW * cssH))));
     renderer.setSize(cssW, cssH, false);
     camera.aspect = cssW / cssH; camera.updateProjectionMatrix();
-    if (!userMoved) goal.r = homeRadius();
   }
 
   return {

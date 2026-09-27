@@ -166,11 +166,17 @@ class Tower {
     return inRange[0];
   }
 
+  // Visual-only timers. game.js calls this every frame in every phase, so effects
+  // fade out between waves and after game over instead of freezing on screen.
+  // The placement bounce runs on real time so a tower placed while paused still appears.
+  tickVisuals(dt, rawDt) {
+    if (this.flashTimer    > 0) this.flashTimer    = Math.max(0, this.flashTimer    - dt);
+    if (this.recoilAnim    > 0) this.recoilAnim    = Math.max(0, this.recoilAnim    - dt);
+    if (this.chainTimer    > 0) this.chainTimer    = Math.max(0, this.chainTimer    - dt);
+    if (this.placementAnim > 0) this.placementAnim = Math.max(0, this.placementAnim - rawDt);
+  }
+
   update(dt, enemies, projectiles, floatingTexts = null) {
-    if (this.flashTimer > 0) this.flashTimer -= dt;
-    if (this.recoilAnim  > 0) this.recoilAnim  = Math.max(0, this.recoilAnim  - dt);
-    if (this.chainTimer  > 0) this.chainTimer  -= dt;
-    if (this.placementAnim > 0) this.placementAnim = Math.max(0, this.placementAnim - dt);
     // Spin speed varies by type
     const spinRates = { Rapid: 6, Laser: 1.4, Tesla: 2.0 };
     this.spinAngle += dt * (spinRates[this.type] || 0.6);
