@@ -1100,7 +1100,7 @@ const Render3D = (() => {
       let v = towerViews.get(t);
       if (v && v.level !== t.level) { removeTower(v); towerViews.delete(t); v = null; }
       if (!v) v = buildTower(t);
-      // Placement bounce: 0 → 1.25 → 1 over 0.38s (same curve as the 2D version)
+      // Placement bounce: 0 → 1.25 → 1 over 0.38s (placementAnim is ticked in game.js)
       let s = 1;
       if (t.placementAnim > 0) { const p = 1 - t.placementAnim / 0.38; s = p < 0.6 ? (p / 0.6) * 1.25 : 1.25 - ((p - 0.6) / 0.4) * 0.25; }
       v.root.scale.setScalar(Math.max(0.001, s));

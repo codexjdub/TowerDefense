@@ -775,7 +775,7 @@ function update(rawDt) {
     const nextP = [];
     for (const p of state.projectiles) {
       const wasAlive = p.alive;
-      p.update(dt, state.enemies, state.floatingTexts, null);   // explosion effects come from Render3D
+      p.update(dt, state.enemies, state.floatingTexts);
       if (!p.alive && wasAlive && p.aoe > 0) {
         triggerShake(4, 0.18);
         Render3D.onExplosion(p.x, p.y);
