@@ -320,7 +320,7 @@ function drawMapCountdown(ctx, state) {
 function drawHotkeyOverlay(ctx, state) {
   if (!state.showHotkeys) return;
 
-  const pw = 360, ph = 272;
+  const pw = 360, ph = 356;
   const px = (COLS * TILE_SIZE - pw) / 2;
   const py = (CANVAS_H - ph) / 2;
 
@@ -353,6 +353,9 @@ function drawHotkeyOverlay(ctx, state) {
     ['P',      'Pause / Resume'],
     ['Esc',    'Deselect tower'],
     ['F',      'Toggle FPS counter'],
+    ['Right-drag', 'Rotate camera'],
+    ['Scroll', 'Zoom camera'],
+    ['C',      'Reset camera'],
     ['?',      'Toggle this help'],
   ];
 
@@ -360,19 +363,19 @@ function drawHotkeyOverlay(ctx, state) {
     const ry = py + 58 + i * 28;
 
     // Key badge
-    roundRect(ctx, px + 22, ry - 11, 62, 20, 4);
+    roundRect(ctx, px + 22, ry - 11, 72, 20, 4);
     ctx.fillStyle = '#1e2a45'; ctx.fill();
     ctx.strokeStyle = '#2d3d60'; ctx.lineWidth = 1; ctx.stroke();
 
     ctx.fillStyle   = '#f1c40f';
     ctx.font        = 'bold 11px Arial';
     ctx.textAlign   = 'center';
-    ctx.fillText(key, px + 53, ry + 3);
+    ctx.fillText(key, px + 58, ry + 3);
 
     ctx.fillStyle   = '#bdc3c7';
     ctx.font        = '12px Arial';
     ctx.textAlign   = 'left';
-    ctx.fillText(desc, px + 96, ry + 3);
+    ctx.fillText(desc, px + 106, ry + 3);
   });
 
   // Close hint
@@ -411,7 +414,7 @@ function drawPauseOverlay(ctx) {
 
 // ─── Map selection screen ─────────────────────────────────────────────────────
 function drawMenuScreen(ctx, state) {
-  ctx.fillStyle = 'rgba(10,10,25,0.90)';
+  ctx.fillStyle = 'rgba(10,10,25,0.78)';   // lets the 3D map show through faintly
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
   ctx.textAlign = 'center';
@@ -595,8 +598,7 @@ function drawRunStats(ctx, cx, y, state) {
 }
 
 // ─── Game Over overlay ────────────────────────────────────────────────────────
-function drawGameOver(ctx) {
-  const state = window._gameState;
+function drawGameOver(ctx, state) {
   ctx.fillStyle = 'rgba(0,0,0,0.78)';
   ctx.fillRect(0, 0, COLS * TILE_SIZE, CANVAS_H);
   ctx.textAlign = 'center';
@@ -609,7 +611,7 @@ function drawGameOver(ctx) {
 
   // Split layout: run stats left, leaderboard right
   drawRunStats(ctx, (COLS * TILE_SIZE) / 4, CANVAS_H / 2 - 58, state);
-  drawLeaderboardInOverlay(ctx, (COLS * TILE_SIZE) * 3 / 4, CANVAS_H / 2 - 58);
+  drawLeaderboardInOverlay(ctx, (COLS * TILE_SIZE) * 3 / 4, CANVAS_H / 2 - 58, state);
 
   const cy = CANVAS_H / 2;
   btn(ctx, (COLS * TILE_SIZE) / 2 - 170, cy + 110, 155, 44, '#1e8449', '#27ae60', 6);
@@ -623,8 +625,7 @@ function drawGameOver(ctx) {
 }
 
 // ─── Victory overlay ──────────────────────────────────────────────────────────
-function drawVictory(ctx) {
-  const state = window._gameState;
+function drawVictory(ctx, state) {
   ctx.fillStyle = 'rgba(0,0,0,0.78)';
   ctx.fillRect(0, 0, COLS * TILE_SIZE, CANVAS_H);
   ctx.textAlign = 'center';
@@ -636,7 +637,7 @@ function drawVictory(ctx) {
     (COLS * TILE_SIZE) / 2, CANVAS_H / 2 - 78);
 
   drawRunStats(ctx, (COLS * TILE_SIZE) / 4, CANVAS_H / 2 - 58, state);
-  drawLeaderboardInOverlay(ctx, (COLS * TILE_SIZE) * 3 / 4, CANVAS_H / 2 - 58);
+  drawLeaderboardInOverlay(ctx, (COLS * TILE_SIZE) * 3 / 4, CANVAS_H / 2 - 58, state);
 
   const cy = CANVAS_H / 2;
   btn(ctx, (COLS * TILE_SIZE) / 2 - 170, cy + 110, 155, 44, '#1a5276', '#2980b9', 6);
@@ -650,8 +651,7 @@ function drawVictory(ctx) {
 }
 
 // ─── Leaderboard (overlay) ────────────────────────────────────────────────────
-function drawLeaderboardInOverlay(ctx, cx, y) {
-  const state   = window._gameState;
+function drawLeaderboardInOverlay(ctx, cx, y, state) {
   const endless = state && state.endlessMode;
   const scores  = endless ? getEndlessScores() : getScores();
   ctx.textAlign = 'center';
@@ -681,7 +681,7 @@ function drawBossHPBar(ctx, state) {
   const bw = 300, bh = 14;
   const bx = (COLS * TILE_SIZE - bw) / 2;
   const by = 8;
-  const pct = Math.max(0, boss.displayHp / boss.maxHp);
+  const pct = Math.min(1, Math.max(0, boss.displayHp / boss.maxHp));   // gradient stops must be 0–1
 
   // Background pill
   ctx.save();

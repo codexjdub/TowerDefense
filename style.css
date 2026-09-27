@@ -11,9 +11,17 @@ body {
   overflow: hidden;
 }
 
-#gameCanvas {
+#gameCanvas,
+#scene3d {
   display: block;
   position: absolute;
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
+}
+
+/* 3D game area sits under the 2D canvas, which draws the sidebar and overlays */
+#scene3d {
+  background: radial-gradient(120% 90% at 50% 30%, #243449 0%, #141c2e 55%, #0b0f1b 100%);
+}
+
+#gameCanvas {
+  z-index: 1;
 }

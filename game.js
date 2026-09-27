@@ -10,22 +10,27 @@ let selectedEndless    = false;
 const ENDLESS_HP_SCALE = 0.12; // +12% HP per tier beyond wave 20
 
 // ─── Canvas setup ─────────────────────────────────────────────────────────────
-const canvas = document.getElementById('gameCanvas');
-const ctx    = canvas.getContext('2d');
-canvas.width  = CANVAS_W;
-canvas.height = CANVAS_H;
+const canvas  = document.getElementById('gameCanvas');
+const ctx     = canvas.getContext('2d');
+const scene3d = document.getElementById('scene3d');
+let renderScale = 1;   // backing-store pixels per logical canvas pixel
 
-// ─── Fit canvas to window (scale down on small screens) ──────────────────────
+// ─── Fit canvases to the window, drawn at the screen's pixel density ─────────
 function fitCanvas() {
-  const scale = Math.min(
-    window.innerWidth  / canvas.width,
-    window.innerHeight / canvas.height,
-    1  // never upscale
-  );
-  canvas.style.transformOrigin = 'top left';
-  canvas.style.transform       = `scale(${scale})`;
-  canvas.style.left = `${Math.max(0, (window.innerWidth  - canvas.width  * scale) / 2)}px`;
-  canvas.style.top  = `${Math.max(0, (window.innerHeight - canvas.height * scale) / 2)}px`;
+  const scale = Math.min(window.innerWidth / CANVAS_W, window.innerHeight / CANVAS_H);
+  const dpr   = Math.min(window.devicePixelRatio || 1, 2);
+  const cssW  = CANVAS_W * scale, cssH = CANVAS_H * scale;
+  const left  = Math.max(0, (window.innerWidth  - cssW) / 2);
+  const top   = Math.max(0, (window.innerHeight - cssH) / 2);
+  Object.assign(canvas.style, { width: `${cssW}px`, height: `${cssH}px`, left: `${left}px`, top: `${top}px` });
+  canvas.width  = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  renderScale   = canvas.width / CANVAS_W;
+
+  // The 3D view covers the game area; the sidebar is drawn on the 2D canvas
+  const gameW = COLS * TILE_SIZE * scale;
+  Object.assign(scene3d.style, { width: `${gameW}px`, height: `${cssH}px`, left: `${left}px`, top: `${top}px` });
+  Render3D.resize(gameW, cssH, dpr);
 }
 window.addEventListener('resize', fitCanvas);
 fitCanvas();
@@ -75,8 +80,6 @@ function makeState(mapIndex = 0) {
     flashTimer:       0,
     showFPS:          false,
     showHotkeys:      false,
-    ambientParticles: [],
-    spawnRipples:     [],
     endlessMode:      selectedEndless,
   };
 }
@@ -147,7 +150,6 @@ function resumeGame() {
     tower.priority = t.priority;
     state.towers.push(tower);
   }
-  state.ambientParticles = makeAmbientParticles();
   Audio.startMusic();
 }
 
@@ -155,9 +157,16 @@ function resumeGame() {
 function canvasXY(clientX, clientY) {
   const r = canvas.getBoundingClientRect();
   return [
-    (clientX - r.left) * (canvas.width  / r.width),
-    (clientY - r.top)  * (canvas.height / r.height),
+    (clientX - r.left) * (CANVAS_W / r.width),
+    (clientY - r.top)  * (CANVAS_H / r.height),
   ];
+}
+
+// Tile under the pointer, found by raycasting into the 3D scene (null outside the map)
+function tileAt(clientX, clientY) {
+  const [mx] = canvasXY(clientX, clientY);
+  if (mx >= UI_X || state.phase === 'menu') return null;
+  return Render3D.pickTile(clientX, clientY);
 }
 
 // ─── Keyboard ─────────────────────────────────────────────────────────────────
@@ -186,6 +195,9 @@ document.addEventListener('keydown', e => {
     state.showFPS = !state.showFPS;
   }
 
+  // C — reset the camera
+  if (e.key === 'c' || e.key === 'C') Render3D.resetCamera();
+
   // Space — start wave / skip countdown
   if (e.key === ' ') {
     e.preventDefault();
@@ -211,7 +223,7 @@ document.addEventListener('keydown', e => {
       if (state.gold >= cost) {
         state.gold -= t.upgrade();
         Audio.upgrade();
-        state.particles.push(...spawnPlacementParticles(t.col, t.row));
+        Render3D.onUpgrade(t);
       }
     }
   }
@@ -220,8 +232,9 @@ document.addEventListener('keydown', e => {
 // ─── Mouse events ─────────────────────────────────────────────────────────────
 canvas.addEventListener('mousemove', e => {
   const [mx, my] = canvasXY(e.clientX, e.clientY);
-  state.mouseCol = Math.floor(mx / TILE_SIZE);
-  state.mouseRow = Math.floor(my / TILE_SIZE);
+  const tile = tileAt(e.clientX, e.clientY);
+  state.mouseCol = tile ? tile.col : -1;
+  state.mouseRow = tile ? tile.row : -1;
 
   // Menu hover detection
   if (state.phase === 'menu') {
@@ -249,16 +262,48 @@ canvas.addEventListener('mousemove', e => {
 
 canvas.addEventListener('mouseleave', () => { state.mouseCol = -1; state.mouseRow = -1; });
 
-canvas.addEventListener('contextmenu', e => {
-  e.preventDefault();
+// ─── Camera: right-drag to orbit, wheel to zoom ───────────────────────────────
+// A right-click without dragging still cancels placement / selection.
+let rightDrag = null;            // { x, y, moved, orbit } while the right button is held
+let rightDragJustEnded = false;  // Windows fires contextmenu after mouseup
+function cancelSelection() {
   state.selectedTowerType = null;
   state.selectedTower     = null;
+}
+canvas.addEventListener('mousedown', e => {
+  if (e.button !== 2) return;
+  const [mx] = canvasXY(e.clientX, e.clientY);
+  rightDrag = { x: e.clientX, y: e.clientY, moved: 0, orbit: mx < UI_X && state.phase !== 'menu' };
 });
+window.addEventListener('mousemove', e => {
+  if (!rightDrag) return;
+  const dx = e.clientX - rightDrag.x, dy = e.clientY - rightDrag.y;
+  rightDrag.x = e.clientX; rightDrag.y = e.clientY;
+  rightDrag.moved += Math.abs(dx) + Math.abs(dy);
+  if (rightDrag.orbit && rightDrag.moved > 4) Render3D.orbit(dx, dy);
+});
+window.addEventListener('mouseup', e => {
+  if (e.button !== 2 || !rightDrag) return;
+  rightDragJustEnded = rightDrag.moved > 4;
+  if (!rightDragJustEnded) cancelSelection();
+  rightDrag = null;
+});
+canvas.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  if (!rightDrag && !rightDragJustEnded) cancelSelection();   // e.g. Ctrl-click on a Mac
+  rightDragJustEnded = false;
+});
+canvas.addEventListener('wheel', e => {
+  const [mx] = canvasXY(e.clientX, e.clientY);
+  if (mx >= UI_X || state.phase === 'menu') return;
+  e.preventDefault();
+  Render3D.zoom(e.deltaY);
+}, { passive: false });
 
 canvas.addEventListener('click', e => {
   Audio.init();
   const [mx, my] = canvasXY(e.clientX, e.clientY);
-  handleClick(mx, my);
+  handleClick(mx, my, tileAt(e.clientX, e.clientY));
 });
 
 // ─── Touch support ────────────────────────────────────────────────────────────
@@ -267,21 +312,23 @@ canvas.addEventListener('touchstart', e => {
   Audio.init();
   const t = e.touches[0];
   const [mx, my] = canvasXY(t.clientX, t.clientY);
-  handleClick(mx, my);
+  handleClick(mx, my, tileAt(t.clientX, t.clientY));
 }, { passive: false });
 
 canvas.addEventListener('touchmove', e => {
   e.preventDefault();
   const t = e.touches[0];
-  const [mx, my] = canvasXY(t.clientX, t.clientY);
-  state.mouseCol = Math.floor(mx / TILE_SIZE);
-  state.mouseRow = Math.floor(my / TILE_SIZE);
+  const tile = tileAt(t.clientX, t.clientY);
+  state.mouseCol = tile ? tile.col : -1;
+  state.mouseRow = tile ? tile.row : -1;
 }, { passive: false });
 
 canvas.addEventListener('touchend', e => { e.preventDefault(); }, { passive: false });
 
 // ─── Click handler ────────────────────────────────────────────────────────────
-function handleClick(mx, my) {
+// (mx, my) are canvas coordinates for the menu, overlays and sidebar;
+// `tile` is the map tile under the pointer, or null.
+function handleClick(mx, my, tile) {
   // Menu map/difficulty selection
   if (state.phase === 'menu') {
     // Resume saved game button (shown in leaderboard area when save exists)
@@ -357,8 +404,8 @@ function handleClick(mx, my) {
   }
 
   // Game grid
-  const col = Math.floor(mx / TILE_SIZE);
-  const row = Math.floor(my / TILE_SIZE);
+  const col = tile ? tile.col : -1;
+  const row = tile ? tile.row : -1;
 
   const hit = state.towers.find(t => t.col === col && t.row === row);
   if (hit) {
@@ -461,7 +508,7 @@ function handleTowerActionClick(mx, my) {
     if (state.gold >= cost) {
       state.gold -= t.upgrade();
       Audio.upgrade();
-      state.particles.push(...spawnPlacementParticles(t.col, t.row));
+      Render3D.onUpgrade(t);
     }
     return;
   }
@@ -471,6 +518,7 @@ function handleTowerActionClick(mx, my) {
   if (mx >= UI_X + 10 && mx <= UI_X + UI_WIDTH - 10 && my >= sellY && my <= sellY + 28) {
     if (state.sellConfirm && state.sellConfirmTimer > 0) {
       // Second click — execute sell
+      Render3D.onSell(t);
       state.gold          += t.sellValue;
       state.towers         = state.towers.filter(tt => tt !== t);
       state.selectedTower  = null;
@@ -495,18 +543,18 @@ function placeTower(col, row) {
   if (state.gold < def.cost) return;
 
   state.gold -= def.cost;
-  state.towers.push(new Tower(state.selectedTowerType, col, row));
-  state.particles.push(...spawnPlacementParticles(col, row));
+  const tower = new Tower(state.selectedTowerType, col, row);
+  state.towers.push(tower);
+  Render3D.onPlace(tower);
   Audio.towerPlace();
 }
 
 // ─── Map / game management ────────────────────────────────────────────────────
 function startMap(index) {
   setMap(index);
-  state                  = makeState(index);
-  state.phase            = 'build';
-  state.mapIndex         = index;
-  state.ambientParticles = makeAmbientParticles();
+  state          = makeState(index);
+  state.phase    = 'build';
+  state.mapIndex = index;
   Audio.startMusic();
 }
 
@@ -586,7 +634,7 @@ function gameLoop(ts) {
   }
 
   update(rawDt);
-  draw();
+  draw(rawDt);
   requestAnimationFrame(gameLoop);
 }
 
@@ -603,10 +651,6 @@ function update(rawDt) {
     if (state.shake.timer <= 0) { state.shake.x = 0; state.shake.y = 0; }
   }
   if (state.flashTimer > 0) state.flashTimer -= rawDt;
-
-  // Ambient particles + spawn ripples (real-time, always)
-  for (const ap of state.ambientParticles) ap.update(rawDt);
-  state.spawnRipples = state.spawnRipples.filter(rp => { rp.update(rawDt); return rp.alive; });
 
   // Tick tower placement bounce animations (real-time, always — even in build/countdown)
   for (const t of state.towers) {
@@ -672,14 +716,13 @@ function update(rawDt) {
         const scale = 1 + tier * ENDLESS_HP_SCALE;
         e.hp        = Math.round(e.hp * scale);
         e.maxHp     = e.hp;
-        e.displayHp = e.hp;
       }
+      // Start the smooth HP bar at the adjusted HP (difficulty and Swarm can lower it
+      // below the base value, which would put displayHp above maxHp)
+      e.displayHp = e.hp;
       e.alive = true;
       state.enemies.push(e);
-      // Spawn ripple + brief flash at START tile
-      const sx = PATH_WAYPOINTS[0].x, sy = PATH_WAYPOINTS[0].y;
-      state.spawnRipples.push(new SpawnRipple(sx, sy, e.color));
-      state.particles.push(...spawnEnemyBirthParticles(sx, sy, e.color));
+      Render3D.onSpawn(e);
     }
 
     // Update enemies
@@ -693,18 +736,14 @@ function update(rawDt) {
         state.livesLost++;
         state._curWaveLifeLoss++;
         if (state.lives < 0) state.lives = 0;
-        state.particles.push(...spawnDeathParticles(
-          PATH_WAYPOINTS[PATH_WAYPOINTS.length - 1].x,
-          PATH_WAYPOINTS[PATH_WAYPOINTS.length - 1].y,
-          e.color, e.type
-        ));
+        Render3D.onEscape(e);
         Audio.lifeLost();
       } else if (!e.alive) {
         state.gold += e.reward;
         state.killCount++;
         if (e.lastHitTower) e.lastHitTower.killCount++;
         e.reward = 0;
-        state.particles.push(...spawnDeathParticles(e.x, e.y, e.color, e.type));
+        Render3D.onDeath(e);
         Audio.enemyDeath(e.type === 'Boss');
         if (e.type === 'Boss') { triggerShake(10, 0.7); triggerFlash(); }
       } else {
@@ -736,8 +775,11 @@ function update(rawDt) {
     const nextP = [];
     for (const p of state.projectiles) {
       const wasAlive = p.alive;
-      p.update(dt, state.enemies, state.floatingTexts, state.particles);
-      if (!p.alive && wasAlive && p.aoe > 0) triggerShake(4, 0.18);
+      p.update(dt, state.enemies, state.floatingTexts, null);   // explosion effects come from Render3D
+      if (!p.alive && wasAlive && p.aoe > 0) {
+        triggerShake(4, 0.18);
+        Render3D.onExplosion(p.x, p.y);
+      }
       if (p.alive) nextP.push(p);
     }
     state.projectiles = nextP;
@@ -805,44 +847,27 @@ function tickFloatingTexts(dt) {
 }
 
 // ─── Draw ─────────────────────────────────────────────────────────────────────
-function draw() {
+// The game area is rendered in 3D by Render3D (on #scene3d, underneath); this
+// 2D canvas is transparent over the map and draws the sidebar and overlays.
+function draw(rawDt) {
+  Render3D.render(state, rawDt);
+
+  ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
   ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
 
+  if (!Render3D.ok) {
+    ctx.fillStyle = '#95a5a6'; ctx.font = '15px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('The 3D view could not start (Three.js did not load or WebGL is unavailable).', (COLS * TILE_SIZE) / 2, CANVAS_H / 2);
+    ctx.textAlign = 'left';
+  }
+
   if (state.phase === 'menu') {
-    drawMap(ctx);
     drawMenuScreen(ctx, state);
     return;
   }
 
-  // Apply screen shake to the game world only (not UI/overlays)
-  ctx.save();
-  if (state.shake.timer > 0) ctx.translate(state.shake.x, state.shake.y);
-
-  drawMap(ctx);
-
-  // Ambient dust/firefly particles (over map, under towers)
-  for (const ap of state.ambientParticles) ap.draw(ctx);
-  // Spawn ripples at the START tile
-  for (const rp of state.spawnRipples) rp.draw(ctx);
-
-  drawPlacementPreview(ctx);
-  drawHoverRangePreview(ctx);
-
-  for (const t of state.towers) t.draw(ctx, t === state.selectedTower);
-  for (const e of state.enemies) if (e.alive) e.draw(ctx);
-  // Laser beams and Tesla chains drawn on top of enemies
-  for (const t of state.towers) {
-    if (t.type === 'Laser') t.drawBeam(ctx);
-    if (t.type === 'Tesla') t.drawChain(ctx);
-  }
-  for (const p of state.projectiles) p.draw(ctx);
-  // During victory, skip particles here — drawn on top of overlay instead
-  if (state.phase !== 'victory') {
-    for (const p of state.particles) p.draw(ctx);
-  }
-  for (const ft of state.floatingTexts) ft.draw(ctx);
-
-  ctx.restore();
+  // HP bars and damage numbers, positioned over the 3D scene
+  Render3D.drawOverlay(ctx, state);
 
   // Boss death flash — full-screen white pulse over game area, under UI
   if (state.flashTimer > 0) {
@@ -863,9 +888,9 @@ function draw() {
 
   if (state.paused) drawPauseOverlay(ctx);
 
-  if (state.phase === 'gameover') drawGameOver(ctx);
+  if (state.phase === 'gameover') drawGameOver(ctx, state);
   if (state.phase === 'victory') {
-    drawVictory(ctx);
+    drawVictory(ctx, state);
     // Confetti on top of the overlay
     for (const p of state.particles) p.draw(ctx);
   }
@@ -883,50 +908,6 @@ function draw() {
     ctx.textAlign = 'left';
     ctx.fillText(label, 10, 24);
   }
-}
-
-// ─── Placement preview ────────────────────────────────────────────────────────
-function drawPlacementPreview(ctx) {
-  if (!state.selectedTowerType) return;
-  const col = state.mouseCol, row = state.mouseRow;
-  if (col < 0 || col >= COLS || row < 0 || row >= ROWS) return;
-
-  const def      = TOWER_DEFS[state.selectedTowerType];
-  const canPlace = !isPathTile(col, row) &&
-                   !state.towers.find(t => t.col === col && t.row === row) &&
-                   state.gold >= def.cost;
-  const px    = col * TILE_SIZE + TILE_SIZE / 2;
-  const py    = row * TILE_SIZE + TILE_SIZE / 2;
-  const range = def.range * UPGRADE_MULTS[0].range * TILE_SIZE;
-
-  ctx.beginPath();
-  ctx.arc(px, py, range, 0, Math.PI * 2);
-  ctx.fillStyle   = canPlace ? 'rgba(52,152,219,0.10)' : 'rgba(231,76,60,0.10)';
-  ctx.fill();
-  ctx.strokeStyle = canPlace ? 'rgba(52,152,219,0.55)' : 'rgba(231,76,60,0.55)';
-  ctx.lineWidth   = 1.5;
-  ctx.stroke();
-
-  ctx.fillStyle = canPlace ? 'rgba(52,152,219,0.35)' : 'rgba(231,76,60,0.35)';
-  ctx.fillRect(col * TILE_SIZE + 3, row * TILE_SIZE + 3, TILE_SIZE - 6, TILE_SIZE - 6);
-}
-
-// ─── Hover range preview (no tower type selected, mouse over placed tower) ────
-function drawHoverRangePreview(ctx) {
-  if (state.selectedTowerType) return;
-  if (state.mouseCol < 0 || state.mouseRow < 0) return;
-  const hovered = state.towers.find(
-    t => t.col === state.mouseCol && t.row === state.mouseRow
-  );
-  if (!hovered || hovered === state.selectedTower) return; // selected tower already draws its own ring
-
-  ctx.beginPath();
-  ctx.arc(hovered.x, hovered.y, hovered.range, 0, Math.PI * 2);
-  ctx.fillStyle   = 'rgba(255,255,255,0.04)';
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.30)';
-  ctx.lineWidth   = 1;
-  ctx.stroke();
 }
 
 // ─── Kick off ─────────────────────────────────────────────────────────────────
