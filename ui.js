@@ -1,9 +1,9 @@
 // ─── Layout constants ─────────────────────────────────────────────────────────
-const UI_X         = COLS * TILE_SIZE;   // 960
+const UI_X         = COLS * TILE_SIZE;   // 1280
 const TOWER_BTN_H  = 38;
 const STATS_Y      = 10;
 const TOWER_BTNS_Y = 128;  // after extended stats block + gap
-const TOWER_INFO_Y = TOWER_BTNS_Y + Object.keys(TOWER_DEFS).length * TOWER_BTN_H + 8; // 326
+const TOWER_INFO_Y = TOWER_BTNS_Y + Object.keys(TOWER_DEFS).length * TOWER_BTN_H + 8; // 402
 const CONTROLS_Y   = CANVAS_H - 142;    // more room for ? button
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

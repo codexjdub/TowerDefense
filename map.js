@@ -2,8 +2,8 @@ const TILE_SIZE = 64;
 const COLS      = 20;
 const ROWS      = 14;
 const UI_WIDTH  = 200;
-const CANVAS_W  = COLS * TILE_SIZE + UI_WIDTH; // 1160
-const CANVAS_H  = ROWS * TILE_SIZE;            // 672
+const CANVAS_W  = COLS * TILE_SIZE + UI_WIDTH; // 1480
+const CANVAS_H  = ROWS * TILE_SIZE;            // 896
 
 // ─── Map definitions ──────────────────────────────────────────────────────────
 const MAP_CONFIGS = [
