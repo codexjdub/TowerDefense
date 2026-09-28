@@ -9,6 +9,7 @@ body {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
+  touch-action: none;   /* the game handles drag and pinch itself; no page pan or zoom */
 }
 
 #gameCanvas,

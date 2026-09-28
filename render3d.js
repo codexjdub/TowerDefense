@@ -10,7 +10,7 @@ const Render3D = (() => {
   const noop = () => {};
   if (!window.THREE) {
     return { ok: false, render: noop, resize: noop, drawOverlay: noop, pickTile: () => null, project: () => [0, 0],
-             orbit: noop, zoom: noop, resetCamera: noop, onSpawn: noop, onDeath: noop, onEscape: noop,
+             orbit: noop, zoom: noop, zoomBy: noop, resetCamera: noop, onSpawn: noop, onDeath: noop, onEscape: noop,
              onExplosion: noop, onPlace: noop, onUpgrade: noop, onSell: noop };
   }
 
@@ -38,7 +38,7 @@ const Render3D = (() => {
   try { renderer = new THREE.WebGLRenderer({ canvas: canvas3d, antialias: true, alpha: true }); }
   catch (err) {
     return { ok: false, render: noop, resize: noop, drawOverlay: noop, pickTile: () => null, project: () => [0, 0],
-             orbit: noop, zoom: noop, resetCamera: noop, onSpawn: noop, onDeath: noop, onEscape: noop,
+             orbit: noop, zoom: noop, zoomBy: noop, resetCamera: noop, onSpawn: noop, onDeath: noop, onEscape: noop,
              onExplosion: noop, onPlace: noop, onUpgrade: noop, onSell: noop };
   }
   renderer.setClearColor(0x000000, 0);
@@ -1251,9 +1251,11 @@ const Render3D = (() => {
     goal.th -= dx * 0.006;
     goal.ph = Math.min(1.25, Math.max(0.1, goal.ph - dy * 0.005));
   }
-  function zoom(deltaY) {
-    goal.r = Math.min(40, Math.max(9, goal.r * Math.exp(deltaY * 0.0012)));
+  // factor < 1 moves the camera closer (pinch passes the ratio of finger spreads)
+  function zoomBy(factor) {
+    goal.r = Math.min(40, Math.max(9, goal.r * factor));
   }
+  function zoom(deltaY) { zoomBy(Math.exp(deltaY * 0.0012)); }
   function updateCamera(rawDt, state) {
     if (state.phase === 'menu' && !reduceMotion) goal.th += rawDt * 0.05;   // slow turntable behind the menu
     const k = 1 - Math.exp(-rawDt * 3.2);
@@ -1367,7 +1369,7 @@ const Render3D = (() => {
   }
 
   return {
-    ok: true, render, resize, drawOverlay, pickTile, project, orbit, zoom, resetCamera,
+    ok: true, render, resize, drawOverlay, pickTile, project, orbit, zoom, zoomBy, resetCamera,
     onSpawn, onDeath, onEscape, onExplosion, onPlace, onUpgrade, onSell,
   };
 })();

@@ -54,6 +54,9 @@ connection is needed. Requires a browser with WebGL.
 
 Right-click (without dragging) or `Esc` cancels tower placement.
 
+**Touch:** tap to select and place, drag with one finger to rotate the camera, pinch to
+zoom. Hold a finger still on the map to preview a placement before lifting.
+
 ## Structure
 
 ```

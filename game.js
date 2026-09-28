@@ -313,23 +313,61 @@ canvas.addEventListener('click', e => {
   handleClick(mx, my, tileAt(e.clientX, e.clientY));
 });
 
-// ─── Touch support ────────────────────────────────────────────────────────────
+// ─── Touch: tap = click, one-finger drag = rotate camera, pinch = zoom ────────
+// Taps fire when the finger lifts, and only if it stayed put and no second finger
+// joined, so starting a rotate or a pinch never places a tower by accident.
+const TAP_SLOP = 10;       // px a finger may drift and still count as a tap
+let touchGesture = null;   // { x, y, pinch, moved, multi, camera } while fingers are down
+
+// Reference for the fingers now down: the first finger's position, plus the spread of two
+function touchAnchor(touches) {
+  const a = touches[0], b = touches[1];
+  return { x: a.clientX, y: a.clientY,
+           pinch: b ? Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) : 0 };
+}
+
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
   Audio.init();
-  const t = e.touches[0];
-  const [mx, my] = canvasXY(t.clientX, t.clientY);
-  handleClick(mx, my, tileAt(t.clientX, t.clientY));
+  if (!touchGesture) {
+    const [mx] = canvasXY(e.touches[0].clientX, e.touches[0].clientY);
+    touchGesture = { moved: 0, multi: false, camera: mx < UI_X && state.phase !== 'menu' };
+  }
+  Object.assign(touchGesture, touchAnchor(e.touches));
+  if (e.touches.length > 1) touchGesture.multi = true;
+  // A finger resting on the map previews placement under it
+  pointer = touchGesture.multi ? null : { x: touchGesture.x, y: touchGesture.y };
 }, { passive: false });
 
 canvas.addEventListener('touchmove', e => {
   e.preventDefault();
-  const t = e.touches[0];
-  pointer = { x: t.clientX, y: t.clientY };
-  updateHoverTile();
+  const g = touchGesture;
+  if (!g) return;
+  const now = touchAnchor(e.touches);
+  const dx = now.x - g.x, dy = now.y - g.y;
+  g.moved += Math.abs(dx) + Math.abs(dy);
+  if (g.camera) {
+    if (e.touches.length > 1) { if (g.pinch && now.pinch) Render3D.zoomBy(g.pinch / now.pinch); }
+    else if (g.moved > TAP_SLOP) Render3D.orbit(dx, dy);
+  }
+  if (g.moved > TAP_SLOP) pointer = null;
+  Object.assign(g, now);
 }, { passive: false });
 
-canvas.addEventListener('touchend', e => { e.preventDefault(); }, { passive: false });
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  const g = touchGesture;
+  if (!g) return;
+  if (e.touches.length) { Object.assign(g, touchAnchor(e.touches)); return; }   // carry on with the fingers left
+  touchGesture = null;
+  pointer = null;
+  if (g.multi || g.moved > TAP_SLOP) return;
+  const t = e.changedTouches[0];
+  const [mx, my] = canvasXY(t.clientX, t.clientY);
+  handleClick(mx, my, tileAt(t.clientX, t.clientY));
+}, { passive: false });
+
+canvas.addEventListener('touchcancel', () => { touchGesture = null; pointer = null; });
 
 // ─── Click handler ────────────────────────────────────────────────────────────
 // (mx, my) are canvas coordinates for the menu, overlays and sidebar;

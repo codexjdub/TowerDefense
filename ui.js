@@ -320,7 +320,7 @@ function drawMapCountdown(ctx, state) {
 function drawHotkeyOverlay(ctx, state) {
   if (!state.showHotkeys) return;
 
-  const pw = 360, ph = 356;
+  const pw = 360, ph = 412;
   const px = (COLS * TILE_SIZE - pw) / 2;
   const py = (CANVAS_H - ph) / 2;
 
@@ -356,6 +356,8 @@ function drawHotkeyOverlay(ctx, state) {
     ['Right-drag', 'Rotate camera'],
     ['Scroll', 'Zoom camera'],
     ['C',      'Reset camera'],
+    ['Touch drag', 'Rotate camera'],
+    ['Pinch',  'Zoom camera'],
     ['?',      'Toggle this help'],
   ];
 

@@ -278,6 +278,14 @@ Click detection mirrors drawing coordinates exactly (same constants, same math).
 
 Right mouse: drag orbits the camera; a click without dragging cancels placement/selection.
 
+Touch (`touchGesture` in game.js): a tap calls `handleClick` on touchend, only if the finger
+moved less than `TAP_SLOP` (10px) and no second finger joined, so starting a gesture never
+places a tower. One-finger drag on the map → `Render3D.orbit()`; two-finger pinch →
+`Render3D.zoomBy(oldSpread / newSpread)`. A resting finger sets `pointer`, so the placement
+preview shows under it. `touch-action: none` on body stops the browser's own pan/zoom.
+Synthetic `TouchEvent`s work for testing in the preview (`new Touch({identifier, target:
+canvas, clientX, clientY})`).
+
 Menu map cards: laid out by `MENU_CARDS` in ui.js (`perRow=6`, `w=210`, `h=172`, `gapX=18`,
 `gapY=14`, `y=164`). Drawing, hover and clicks all use `menuCardPos(i)`, `menuCardAt(mx, my)`
 and `menuCardsBottom()` (top of the resume button / leaderboard). 12 maps fill two rows;
