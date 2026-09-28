@@ -243,62 +243,137 @@ document.addEventListener('keydown', e => {
   }
 });
 
-// ─── Mouse events ─────────────────────────────────────────────────────────────
-canvas.addEventListener('mousemove', e => {
+// ─── Hover (mouse / pen): hovered tile, menu hover, cursor ────────────────────
+canvas.addEventListener('pointermove', e => {
+  if (e.pointerType === 'touch') return;   // touch has no hover; presses handle it below
   const [mx, my] = canvasXY(e.clientX, e.clientY);
   pointer = { x: e.clientX, y: e.clientY };
   updateHoverTile();
 
-  // Menu hover detection
-  if (state.phase === 'menu') state.menuHover = menuCardAt(mx, my);
-
-  // Cursor style
-  if (mx >= UI_X)                      canvas.style.cursor = 'pointer';
-  else if (state.selectedTowerType)    canvas.style.cursor = 'crosshair';
-  else if (state.phase === 'menu')     canvas.style.cursor = state.menuHover >= 0 ? 'pointer' : 'default';
-  else                                 canvas.style.cursor = 'default';
+  if (state.phase === 'menu') {
+    const hit = menuHitAt(mx, my);
+    state.menuHover      = hit && hit.kind === 'map' ? hit.index : -1;
+    canvas.style.cursor = hit ? 'pointer' : 'default';
+  }
+  else if (mx >= UI_X)               canvas.style.cursor = 'pointer';
+  else if (state.selectedTowerType)  canvas.style.cursor = 'crosshair';
+  else                               canvas.style.cursor = 'default';
 });
 
-canvas.addEventListener('mouseleave', () => { pointer = null; updateHoverTile(); });
+canvas.addEventListener('pointerleave', e => {
+  if (e.pointerType !== 'touch') { pointer = null; updateHoverTile(); }
+});
 
-// ─── Camera: right-drag to orbit, wheel to zoom ───────────────────────────────
-// A right-click without dragging still cancels placement / selection.
-let rightDrag = null;            // { x, y, moved, orbit } while the right button is held
-let rightDragJustEnded = false;  // Windows fires contextmenu after mouseup
+// ─── Presses (mouse, touch, pen), one set of Pointer Events ──────────────────
+// A primary press (left click, tap) calls handleClick on release, at the point where it
+// started, if it stayed within SLOP. Right-drag (mouse) or one-finger drag (touch, pen)
+// orbits the camera; with a second finger down, the fingers pinch to zoom. A right-click,
+// or a Ctrl-click on a Mac, without dragging cancels placement / selection.
+// Pointer-downs are tracked on window so a finger landing on the letterbox still counts;
+// presses on the canvas are captured so their release is never missed.
+const SLOP = { mouse: 4, touch: 10, pen: 10 };   // px a press may drift and still be a click
+const fingers = new Map();   // pointerId → { x, y } for every pointer currently down
+let press = null;            // the gesture in progress, from the first pointer down to the last up
+
 function cancelSelection() {
   state.selectedTowerType = null;
   state.selectedTower     = null;
 }
-canvas.addEventListener('mousedown', e => {
-  // On a Mac contextmenu fires on mousedown, before a drag's mouseup sets this flag,
-  // so clear it here or it would swallow the next Ctrl-click
-  rightDragJustEnded = false;
-  if (e.button !== 2) return;
+
+// Distance between the first two pointers down (0 with fewer than two)
+function fingerSpread() {
+  const [a, b] = fingers.values();
+  return b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+}
+
+window.addEventListener('pointerdown', e => {
+  fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (press) {                         // another finger joined: never a click, pinch from here on
+    press.multi  = true;
+    press.spread = fingerSpread();
+    pointer = null;
+    return;
+  }
+  const onCanvas = e.target === canvas;
+  if (onCanvas) {
+    e.preventDefault();
+    try { canvas.setPointerCapture(e.pointerId); } catch (_) {}   // throws if the pointer is already gone
+  }
   const [mx] = canvasXY(e.clientX, e.clientY);
-  rightDrag = { x: e.clientX, y: e.clientY, moved: 0, orbit: mx < UI_X && state.phase !== 'menu' };
+  press = {
+    id: e.pointerId, type: e.pointerType, onCanvas,
+    x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY, moved: 0,
+    secondary: e.button === 2, multi: false, spread: 0,
+    camera: onCanvas && mx < UI_X && state.phase !== 'menu',
+  };
+  // A finger resting on the map previews placement under it
+  if (e.pointerType !== 'mouse' && onCanvas) pointer = { x: e.clientX, y: e.clientY };
 });
-window.addEventListener('mousemove', e => {
-  if (!rightDrag) return;
-  // Button released where we never saw the mouseup (e.g. after switching apps mid-drag)
-  if (!(e.buttons & 2)) { rightDrag = null; return; }
-  const dx = e.clientX - rightDrag.x, dy = e.clientY - rightDrag.y;
-  rightDrag.x = e.clientX; rightDrag.y = e.clientY;
-  rightDrag.moved += Math.abs(dx) + Math.abs(dy);
-  if (rightDrag.orbit && rightDrag.moved > 4) Render3D.orbit(dx, dy);
+
+window.addEventListener('pointermove', e => {
+  if (!fingers.has(e.pointerId)) return;
+  fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  const g = press;
+  if (!g) return;
+  // Mouse button released where we never saw it (e.g. after switching apps mid-drag)
+  if (e.pointerType === 'mouse' && e.buttons === 0) { fingers.delete(e.pointerId); press = null; return; }
+
+  if (fingers.size > 1) {              // pinch: zoom by the change in finger spread
+    const s = fingerSpread();
+    if (g.camera && g.spread && s) Render3D.zoomBy(g.spread / s);
+    g.spread = s;
+    if (e.pointerId === g.id) { g.x = e.clientX; g.y = e.clientY; }
+    return;
+  }
+  if (e.pointerId !== g.id) return;
+  const dx = e.clientX - g.x, dy = e.clientY - g.y;
+  g.x = e.clientX; g.y = e.clientY;
+  g.moved += Math.abs(dx) + Math.abs(dy);
+  if (g.moved <= SLOP[g.type]) return;
+  if (g.type !== 'mouse') pointer = null;          // a drag now, not a placement
+  // Mouse orbits with the right button only; left stays for clicking
+  if (g.camera && (g.type !== 'mouse' || g.secondary)) Render3D.orbit(dx, dy);
 });
-window.addEventListener('mouseup', e => {
-  if (e.button !== 2 || !rightDrag) return;
-  rightDragJustEnded = rightDrag.moved > 4;
-  if (!rightDragJustEnded) cancelSelection();
-  rightDrag = null;
-});
-// On window, not the canvas: Windows fires contextmenu wherever the button is released,
-// which can be the letterbox margin after a drag
+
+function endPress(e, cancelled) {
+  if (!fingers.delete(e.pointerId)) return;
+  const g = press;
+  if (!g) return;
+  if (fingers.size) {                  // fingers remain: carry on from one of them
+    if (e.pointerId === g.id) {
+      const [id, f] = fingers.entries().next().value;
+      Object.assign(g, { id, x: f.x, y: f.y });
+    }
+    g.spread = fingerSpread();
+    return;
+  }
+  press = null;
+  if (g.type !== 'mouse') pointer = null;
+  if (cancelled) return;
+  Audio.init();   // pointerup is a user gesture phones accept for starting audio
+  if (g.moved > SLOP[g.type]) return;             // it was a drag
+  if (g.secondary) { cancelSelection(); return; }
+  if (g.multi || !g.onCanvas) return;
+  // Resolve where the placement preview was: under the finger where it landed (touch, pen),
+  // or under the cursor (mouse, whose preview follows it)
+  const x = g.type === 'mouse' ? e.clientX : g.startX, y = g.type === 'mouse' ? e.clientY : g.startY;
+  const [mx, my] = canvasXY(x, y);
+  handleClick(mx, my, tileAt(x, y));
+}
+window.addEventListener('pointerup',     e => endPress(e, false));
+window.addEventListener('pointercancel', e => endPress(e, true));
+
+// Suppress the browser menu everywhere (Windows fires it where the button is released,
+// which can be the letterbox). On a Mac, Ctrl-click fires it mid-press: treat that press
+// as a right-click. A touch long-press also fires it, and must stay a normal press.
 window.addEventListener('contextmenu', e => {
   e.preventDefault();
-  if (!rightDrag && !rightDragJustEnded) cancelSelection();   // e.g. Ctrl-click on a Mac
-  rightDragJustEnded = false;
+  if (press && press.type === 'mouse') press.secondary = true;
 });
+
+// Stops iOS long-press callouts and the synthetic mouse events / click after a tap
+canvas.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
+
 canvas.addEventListener('wheel', e => {
   const [mx] = canvasXY(e.clientX, e.clientY);
   if (mx >= UI_X || state.phase === 'menu') return;
@@ -307,112 +382,18 @@ canvas.addEventListener('wheel', e => {
   Render3D.zoom(e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? window.innerHeight : 1));
 }, { passive: false });
 
-canvas.addEventListener('click', e => {
-  Audio.init();
-  const [mx, my] = canvasXY(e.clientX, e.clientY);
-  handleClick(mx, my, tileAt(e.clientX, e.clientY));
-});
-
-// ─── Touch: tap = click, one-finger drag = rotate camera, pinch = zoom ────────
-// Taps fire when the finger lifts, and only if it stayed put and no second finger
-// joined, so starting a rotate or a pinch never places a tower by accident.
-const TAP_SLOP = 10;       // px a finger may drift and still count as a tap
-let touchGesture = null;   // { x, y, pinch, moved, multi, camera } while fingers are down
-
-// Reference for the fingers now down: the first finger's position, plus the spread of two
-function touchAnchor(touches) {
-  const a = touches[0], b = touches[1];
-  return { x: a.clientX, y: a.clientY,
-           pinch: b ? Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) : 0 };
-}
-
-canvas.addEventListener('touchstart', e => {
-  e.preventDefault();
-  Audio.init();
-  if (!touchGesture) {
-    const [mx] = canvasXY(e.touches[0].clientX, e.touches[0].clientY);
-    touchGesture = { moved: 0, multi: false, camera: mx < UI_X && state.phase !== 'menu' };
-  }
-  Object.assign(touchGesture, touchAnchor(e.touches));
-  if (e.touches.length > 1) touchGesture.multi = true;
-  // A finger resting on the map previews placement under it
-  pointer = touchGesture.multi ? null : { x: touchGesture.x, y: touchGesture.y };
-}, { passive: false });
-
-canvas.addEventListener('touchmove', e => {
-  e.preventDefault();
-  const g = touchGesture;
-  if (!g) return;
-  const now = touchAnchor(e.touches);
-  const dx = now.x - g.x, dy = now.y - g.y;
-  g.moved += Math.abs(dx) + Math.abs(dy);
-  if (g.camera) {
-    if (e.touches.length > 1) { if (g.pinch && now.pinch) Render3D.zoomBy(g.pinch / now.pinch); }
-    else if (g.moved > TAP_SLOP) Render3D.orbit(dx, dy);
-  }
-  if (g.moved > TAP_SLOP) pointer = null;
-  Object.assign(g, now);
-}, { passive: false });
-
-canvas.addEventListener('touchend', e => {
-  e.preventDefault();
-  const g = touchGesture;
-  if (!g) return;
-  if (e.touches.length) { Object.assign(g, touchAnchor(e.touches)); return; }   // carry on with the fingers left
-  touchGesture = null;
-  pointer = null;
-  if (g.multi || g.moved > TAP_SLOP) return;
-  const t = e.changedTouches[0];
-  const [mx, my] = canvasXY(t.clientX, t.clientY);
-  handleClick(mx, my, tileAt(t.clientX, t.clientY));
-}, { passive: false });
-
-canvas.addEventListener('touchcancel', () => { touchGesture = null; pointer = null; });
-
 // ─── Click handler ────────────────────────────────────────────────────────────
 // (mx, my) are canvas coordinates for the menu, overlays and sidebar;
 // `tile` is the map tile under the pointer, or null.
 function handleClick(mx, my, tile) {
-  // Menu map/difficulty selection
+  // Menu: resume, difficulty, endless toggle, map cards (layout shared with drawing in ui.js)
   if (state.phase === 'menu') {
-    // Resume saved game button (shown in leaderboard area when save exists)
-    // Position matches drawLeaderboardPreview: cx=CANVAS_W/2, button at cx-180 to cx+180
-    if (hasSave()) {
-      const lbY = menuCardsBottom();
-      if (mx >= CANVAS_W / 2 - 180 && mx <= CANVAS_W / 2 + 180 &&
-          my >= lbY && my <= lbY + 28) {
-        resumeGame(); return;
-      }
-    }
-
-    // Difficulty buttons
-    const diffOpts = ['Beginner', 'Normal', 'Veteran'];
-    const dBtnW = 88, dBtnH = 26, dGap = 10;
-    const dRowW = diffOpts.length * dBtnW + (diffOpts.length - 1) * dGap;
-    const dsx   = (CANVAS_W - dRowW) / 2;
-    const dsy   = 76;
-    for (let i = 0; i < diffOpts.length; i++) {
-      const bx = dsx + i * (dBtnW + dGap);
-      if (mx >= bx && mx <= bx + dBtnW && my >= dsy && my <= dsy + dBtnH) {
-        selectedDifficulty = diffOpts[i];
-        state.difficulty   = selectedDifficulty;
-        return;
-      }
-    }
-
-    // Endless mode toggle
-    const eBtnW = 160, eBtnH = 26;
-    const ebx   = (CANVAS_W - eBtnW) / 2;
-    const eby   = 116;
-    if (mx >= ebx && mx <= ebx + eBtnW && my >= eby && my <= eby + eBtnH) {
-      selectedEndless = !selectedEndless;
-      state.endlessMode = selectedEndless;
-      return;
-    }
-
-    // Map cards
-    const card = menuCardAt(mx, my);
-    if (card >= 0) selectMap(card);
+    const hit = menuHitAt(mx, my);
+    if (!hit) return;
+    if (hit.kind === 'resume') resumeGame();
+    else if (hit.kind === 'difficulty') { selectedDifficulty = hit.value; state.difficulty = selectedDifficulty; }
+    else if (hit.kind === 'endless') { selectedEndless = !selectedEndless; state.endlessMode = selectedEndless; }
+    else selectMap(hit.index);
     return;
   }
 

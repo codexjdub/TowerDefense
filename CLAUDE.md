@@ -206,7 +206,9 @@ scenery, portal, castle, menu thumbnail) is derived from the waypoints. Rules fo
   Crossings are fine (Spiral, Crossroads).
 - Append new maps at the end: saves store `mapIndex`, so reordering breaks them.
 - Entrances and exits can be on any edge. The default camera is set back far enough that
-  a portal or castle at the island's front corners stays in view.
+  a portal or castle at the island's front corners stays in view, and the portal and castle
+  fade (`applyFade` in render3d.js) when they stand between the camera and the board, e.g.
+  an exit on the front edge, so the tiles behind them stay visible.
 
 ## Waves
 
@@ -276,20 +278,36 @@ Click detection mirrors drawing coordinates exactly (same constants, same math).
 `handleTowerActionClick()` in game.js.
 `canvasXY(clientX, clientY)` converts browser coords → logical coords via `getBoundingClientRect`.
 
-Right mouse: drag orbits the camera; a click without dragging cancels placement/selection.
+**Input is Pointer Events** (mouse, touch and pen through one path; no mouse/touch/click
+listeners). `pointerdown`/`move`/`up`/`cancel` are on window, so a finger that lands on the
+letterbox still counts; presses that start on the canvas are captured. One `press` tracks a
+gesture from first pointer down to last up; `fingers` holds every pointer currently down.
+- A primary press (left click, tap) calls `handleClick` on release if it moved less than
+  `SLOP` (mouse 4px, touch/pen 10px) and no second finger joined. Touch resolves at the
+  point it landed (where the preview was shown); mouse at the release point.
+- Right-drag (mouse) or one-finger drag (touch/pen) on the map → `Render3D.orbit()`; two
+  fingers → pinch, `Render3D.zoomBy(oldSpread / newSpread)`. Left-drag with a mouse does
+  nothing.
+- A right-click without dragging cancels placement/selection. On a Mac, Ctrl-click fires
+  `contextmenu` mid-press, which marks the mouse press as secondary. A touch long-press
+  also fires it and must stay a normal press.
+- `Audio.init()` runs on pointerup, which phones accept as a user gesture for audio.
+- Hover (mouse/pen only) is a separate canvas `pointermove`: sets `pointer`, menu hover and
+  the cursor. A resting finger sets `pointer` too, so the placement preview shows under it.
+- `touch-action: none` on body stops the browser's own pan/zoom.
+- For testing, dispatch `new PointerEvent(type, { pointerId, pointerType, clientX, clientY,
+  button, buttons, bubbles: true, cancelable: true })` at the canvas (or `document.body` for
+  the letterbox).
 
-Touch (`touchGesture` in game.js): a tap calls `handleClick` on touchend, only if the finger
-moved less than `TAP_SLOP` (10px) and no second finger joined, so starting a gesture never
-places a tower. One-finger drag on the map → `Render3D.orbit()`; two-finger pinch →
-`Render3D.zoomBy(oldSpread / newSpread)`. A resting finger sets `pointer`, so the placement
-preview shows under it. `touch-action: none` on body stops the browser's own pan/zoom.
-Synthetic `TouchEvent`s work for testing in the preview (`new Touch({identifier, target:
-canvas, clientX, clientY})`).
-
-Menu map cards: laid out by `MENU_CARDS` in ui.js (`perRow=6`, `w=210`, `h=172`, `gapX=18`,
-`gapY=14`, `y=164`). Drawing, hover and clicks all use `menuCardPos(i)`, `menuCardAt(mx, my)`
-and `menuCardsBottom()` (top of the resume button / leaderboard). 12 maps fill two rows;
-a 13th map starts a third row, which pushes the leaderboard near the bottom edge.
+Menu layout lives in ui.js and is shared by drawing, hover and clicks: map cards
+(`MENU_CARDS`: `perRow=6`, `w=210`, `h=172`, `gapX=18`, `gapY=14`, `y=164`; `menuCardPos(i)`,
+`menuCardAt()`, `menuCardsBottom()` = top of the resume button / leaderboard), difficulty
+buttons (`MENU_DIFFS`, `MENU_DIFF_BTN`, `menuDiffX(i)`) and the Endless toggle
+(`MENU_ENDLESS_BTN`). `menuHitAt(mx, my)` returns what's under a point
+(`resume`/`difficulty`/`endless`/`map`) and drives both clicks and the cursor. 12 maps fill
+two rows; a 13th starts a third row, which pushes the leaderboard near the bottom edge.
+Minimaps are painted once per map into an offscreen canvas (`miniMapCache` in map.js) and
+reused every frame.
 
 Tower info panel height = 236px. Priority buttons at `iy+105`, upgrade at `iy+159`,
 sell at `iy+194`. Two-click sell confirmation with 2.5s timeout.

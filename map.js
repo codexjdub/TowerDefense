@@ -196,7 +196,29 @@ function isPathTile(col, row) {
 }
 
 // ─── Mini-map preview (for map selection screen) ──────────────────────────────
+// Minimaps never change, so each is painted once into an offscreen canvas at the target
+// context's pixel scale and reused every frame; repainted only if the size or scale changes.
+const miniMapCache = new Map();   // mapIndex → { key, canvas }
+const MINI_PAD = 4;               // room for the start/end dots, which overhang the edge tiles
+
 function drawMiniMap(ctx, mapIndex, x, y, w, h) {
+  const scale = ctx.getTransform().a;
+  const key   = `${w}x${h}@${scale}`;
+  let entry   = miniMapCache.get(mapIndex);
+  if (!entry || entry.key !== key) {
+    const c = document.createElement('canvas');
+    c.width  = Math.ceil((w + MINI_PAD * 2) * scale);
+    c.height = Math.ceil((h + MINI_PAD * 2) * scale);
+    const g = c.getContext('2d');
+    g.scale(scale, scale);
+    paintMiniMap(g, mapIndex, MINI_PAD, MINI_PAD, w, h);
+    entry = { key, canvas: c };
+    miniMapCache.set(mapIndex, entry);
+  }
+  ctx.drawImage(entry.canvas, x - MINI_PAD, y - MINI_PAD, w + MINI_PAD * 2, h + MINI_PAD * 2);
+}
+
+function paintMiniMap(ctx, mapIndex, x, y, w, h) {
   const cfg   = MAP_CONFIGS[mapIndex];
   const scaleX = w / (COLS * TILE_SIZE);
   const scaleY = h / (ROWS * TILE_SIZE);

@@ -7,12 +7,12 @@
 // (x / TILE_SIZE - COLS / 2, height, y / TILE_SIZE - ROWS / 2); +Y is up.
 
 const Render3D = (() => {
+  // Stand-in used when Three.js didn't load or WebGL is unavailable (keep in step with the real API below)
   const noop = () => {};
-  if (!window.THREE) {
-    return { ok: false, render: noop, resize: noop, drawOverlay: noop, pickTile: () => null, project: () => [0, 0],
-             orbit: noop, zoom: noop, zoomBy: noop, resetCamera: noop, onSpawn: noop, onDeath: noop, onEscape: noop,
-             onExplosion: noop, onPlace: noop, onUpgrade: noop, onSell: noop };
-  }
+  const STUB = { ok: false, render: noop, resize: noop, drawOverlay: noop, pickTile: () => null, project: () => [0, 0, 0],
+                 orbit: noop, zoom: noop, zoomBy: noop, resetCamera: noop, onSpawn: noop, onDeath: noop, onEscape: noop,
+                 onExplosion: noop, onPlace: noop, onUpgrade: noop, onSell: noop };
+  if (!window.THREE) return STUB;
 
   const T = TILE_SIZE, TAU = Math.PI * 2;
   const BW = COLS + 2, BH = ROWS + 2;           // board plus a one-tile border ring
@@ -36,11 +36,7 @@ const Render3D = (() => {
   const canvas3d = document.getElementById('scene3d');
   let renderer;
   try { renderer = new THREE.WebGLRenderer({ canvas: canvas3d, antialias: true, alpha: true }); }
-  catch (err) {
-    return { ok: false, render: noop, resize: noop, drawOverlay: noop, pickTile: () => null, project: () => [0, 0],
-             orbit: noop, zoom: noop, zoomBy: noop, resetCamera: noop, onSpawn: noop, onDeath: noop, onEscape: noop,
-             onExplosion: noop, onPlace: noop, onUpgrade: noop, onSell: noop };
-  }
+  catch (err) { return STUB; }
   renderer.setClearColor(0x000000, 0);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -292,8 +288,8 @@ const Render3D = (() => {
 
   // ─── Map: ground, scenery, portal, gatehouse ───────────────────────────────
   let mapGroup = null, builtFor = null, grassMesh = null, roadMesh = null;
-  const portal = { group: null, swirl: null, glow: null };
-  const gate = { group: null, flags: [], torches: [] };
+  const portal = { group: null, swirl: null, glow: null, mats: [], fade: 1 };
+  const gate = { group: null, flags: [], torches: [], mats: [], fade: 1 };
 
   function buildGround(parent) {
     const top = { pos: [], nor: [], uv: [], idx: [] }, side = { pos: [], nor: [], uv: [], idx: [] };
@@ -411,7 +407,7 @@ const Render3D = (() => {
       const a = (i / 6) * Math.PI - Math.PI / 2;
       rock(g, -0.15 - Math.cos(a) * 0.2, 0.05, Math.sin(a) * (0.75 + rng() * 0.2), 1.1 + rng() * 0.6, rng);
     }
-    portal.group = g;
+    portal.group = g; portal.mats = fadeable(g);
     parent.add(g);
   }
   function buildGate(parent) {
@@ -438,8 +434,32 @@ const Render3D = (() => {
       const tg = glowSprite('#ff9a3c', 0.55, 0.7); tg.position.copy(torch.position);
       g.add(torch, tg); gate.torches.push(tg);
     }
-    gate.group = g;
+    gate.group = g; gate.mats = fadeable(g);
     parent.add(g);
+  }
+
+  // The portal and castle fade when they stand between the camera and the board (an exit
+  // on the front edge, or after orbiting), so the tiles behind them stay visible.
+  // Each gets its own material copies so the fade doesn't touch shared materials.
+  function fadeable(group) {
+    const mats = [];
+    group.traverse(o => {
+      if (!o.material || o.isSprite) return;   // glows are faded through their own opacity updates
+      o.material = o.material.clone();
+      o.material.transparent = true;
+      o.material.userData.opacity = o.material.opacity;
+      mats.push(o.material);
+    });
+    return mats;
+  }
+  const _toCam = new THREE.Vector3();
+  function applyFade(s) {
+    // How far the structure stands out toward the camera from the look-at point, on the ground
+    _toCam.set(camera.position.x - cam.tx, 0, camera.position.z - cam.tz).normalize();
+    const p = s.group.position, d = (p.x - cam.tx) * _toCam.x + (p.z - cam.tz) * _toCam.z;
+    const t = Math.min(1, Math.max(0, (d - 4.5) / 2));
+    s.fade = 1 - 0.7 * t * t * (3 - 2 * t);   // 1 → 0.3 as it moves into the foreground
+    for (const m of s.mats) m.opacity = m.userData.opacity * s.fade;
   }
   function buildMap() {
     if (mapGroup) { scene.remove(mapGroup); disposeTree(mapGroup); }
@@ -1347,15 +1367,16 @@ const Render3D = (() => {
     updateBeams(dt, time);   // tip.getWorldPosition updates its own ancestors; render() updates the rest
     sparks.update(dt); debris.update(dt); smoke.update(dt); flashes.update(dt); rings.update(dt); decals.update(dt);
     fireflies.update(time);
+    applyFade(portal); applyFade(gate);
+    portal.glow.material.opacity = (0.45 + 0.15 * Math.sin(time * 3)) * portal.fade;
+    gate.torches.forEach((tg, i) => { tg.material.opacity = (0.55 + 0.2 * Math.sin(time * 13 + i * 2) + 0.1 * Math.sin(time * 29)) * gate.fade; });
     if (dt > 0) {
       portal.swirl.rotation.z -= dt * 1.8;
-      portal.glow.material.opacity = 0.45 + 0.15 * Math.sin(time * 3);
       if (Math.random() < 0.3) {
         const p = portal.group.position;
         sparks.emit(p.x + rand(-0.1, 0.1), rand(0.3, 1.5), p.z + rand(-0.4, 0.4), START_DIR.c * rand(0.2, 0.6), rand(0.1, 0.4), START_DIR.r * rand(0.2, 0.6) + rand(-0.1, 0.1), '#b07cff', 0.8, 0);
       }
       gate.flags.forEach((fl, i) => { fl.rotation.y = Math.sin(time * 3 + i) * 0.35; });
-      gate.torches.forEach((tg, i) => { tg.material.opacity = 0.55 + 0.2 * Math.sin(time * 13 + i * 2) + 0.1 * Math.sin(time * 29); });
     }
     renderer.render(scene, camera);
   }

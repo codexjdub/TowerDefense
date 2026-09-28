@@ -441,6 +441,29 @@ function menuCardsBottom() {
   return MENU_CARDS.y + rows * (MENU_CARDS.h + MENU_CARDS.gapY) + 20;
 }
 
+// Difficulty buttons and Endless toggle, also shared by drawing and click handling
+const MENU_DIFFS      = ['Beginner', 'Normal', 'Veteran'];
+const MENU_DIFF_BTN   = { w: 88, h: 26, gap: 10, y: 76 };
+const MENU_ENDLESS_BTN = { w: 160, h: 26, y: 116 };
+function menuDiffX(i) {
+  const { w, gap } = MENU_DIFF_BTN;
+  const rowW = MENU_DIFFS.length * w + (MENU_DIFFS.length - 1) * gap;
+  return (CANVAS_W - rowW) / 2 + i * (w + gap);
+}
+
+// What (mx, my) is over on the menu: { kind: 'resume' | 'difficulty' | 'endless' | 'map' }, or null
+function menuHitAt(mx, my) {
+  const inRect = (x, y, w, h) => mx >= x && mx <= x + w && my >= y && my <= y + h;
+  if (hasSave() && inRect(CANVAS_W / 2 - 180, menuCardsBottom(), 360, 28)) return { kind: 'resume' };
+  const d = MENU_DIFF_BTN;
+  const diff = MENU_DIFFS.findIndex((_, i) => inRect(menuDiffX(i), d.y, d.w, d.h));
+  if (diff >= 0) return { kind: 'difficulty', value: MENU_DIFFS[diff] };
+  const en = MENU_ENDLESS_BTN;
+  if (inRect((CANVAS_W - en.w) / 2, en.y, en.w, en.h)) return { kind: 'endless' };
+  const card = menuCardAt(mx, my);
+  return card >= 0 ? { kind: 'map', index: card } : null;
+}
+
 function drawMenuScreen(ctx, state) {
   ctx.fillStyle = 'rgba(10,10,25,0.78)';   // lets the 3D map show through faintly
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
@@ -452,15 +475,11 @@ function drawMenuScreen(ctx, state) {
   ctx.fillText('Choose a difficulty and map', CANVAS_W / 2, 66);
 
   // Difficulty selector
-  const DIFF_OPTS   = ['Beginner', 'Normal', 'Veteran'];
   const DIFF_COLORS = { Beginner: '#2ecc71', Normal: '#f39c12', Veteran: '#e74c3c' };
   const DIFF_DESC   = { Beginner: 'More gold & lives, weaker enemies', Normal: 'Standard challenge', Veteran: 'Less resources, stronger enemies' };
-  const dBtnW = 88, dBtnH = 26, dGap = 10;
-  const dRowW = DIFF_OPTS.length * dBtnW + (DIFF_OPTS.length - 1) * dGap;
-  const dsx   = (CANVAS_W - dRowW) / 2;
-  const dsy   = 76;
-  DIFF_OPTS.forEach((d, i) => {
-    const bx     = dsx + i * (dBtnW + dGap);
+  const { w: dBtnW, h: dBtnH, y: dsy } = MENU_DIFF_BTN;
+  MENU_DIFFS.forEach((d, i) => {
+    const bx     = menuDiffX(i);
     const active = (state.difficulty || 'Normal') === d;
     const col    = DIFF_COLORS[d];
     btn(ctx, bx, dsy, dBtnW, dBtnH, active ? col + '40' : '#111828', active ? col : '#253050', 5);
@@ -474,9 +493,8 @@ function drawMenuScreen(ctx, state) {
   ctx.fillText(DIFF_DESC[activeDiff], CANVAS_W / 2, dsy + dBtnH + 12);
 
   // Endless mode toggle
-  const eBtnW = 160, eBtnH = 26;
+  const { w: eBtnW, h: eBtnH, y: eby } = MENU_ENDLESS_BTN;
   const ebx   = (CANVAS_W - eBtnW) / 2;
-  const eby   = 116;
   const eOn   = !!state.endlessMode;
   btn(ctx, ebx, eby, eBtnW, eBtnH,
     eOn ? '#1a3a2a' : '#111828',
