@@ -93,6 +93,26 @@ const Render3D = (() => {
   const DOT = radialTex([[0, 'rgba(255,255,255,1)'], [0.45, 'rgba(255,255,255,0.85)'], [1, 'rgba(255,255,255,0)']], 64);
   const SOFT = radialTex([[0, 'rgba(255,255,255,0.85)'], [0.55, 'rgba(255,255,255,0.35)'], [1, 'rgba(255,255,255,0)']]);
   const SCORCH = radialTex([[0, 'rgba(20,12,6,0.85)'], [0.55, 'rgba(30,20,10,0.5)'], [1, 'rgba(30,20,10,0)']]);
+  // Frost patch under slowed enemies: an icy disc with six-fold crystal spikes
+  const FROST = (() => {
+    const s = 128, c = makeCanvas(s, s), g = c.getContext('2d'), rng = mulberry32(77);
+    const disc = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+    disc.addColorStop(0, 'rgba(230,248,255,0.95)'); disc.addColorStop(0.6, 'rgba(175,220,250,0.65)'); disc.addColorStop(1, 'rgba(150,200,240,0)');
+    g.fillStyle = disc; g.fillRect(0, 0, s, s);
+    g.translate(s / 2, s / 2); g.strokeStyle = 'rgba(255,255,255,0.9)'; g.lineCap = 'round';
+    for (let i = 0; i < 6; i++) {
+      const a = i / 6 * TAU + rng() * 0.2, len = s * (0.36 + rng() * 0.1);
+      g.lineWidth = 3; g.beginPath(); g.moveTo(0, 0); g.lineTo(Math.cos(a) * len, Math.sin(a) * len); g.stroke();
+      g.lineWidth = 1.4;
+      for (const f of [0.45, 0.7]) {                       // side branches
+        const bx = Math.cos(a) * len * f, by = Math.sin(a) * len * f, bl = len * 0.22;
+        for (const d of [-0.7, 0.7]) { g.beginPath(); g.moveTo(bx, by); g.lineTo(bx + Math.cos(a + d) * bl, by + Math.sin(a + d) * bl); g.stroke(); }
+      }
+    }
+    const t = new THREE.CanvasTexture(c);
+    SHARED.add(t);
+    return t;
+  })();
 
   // ─── Board (recomputed whenever the map changes) ───────────────────────────
   let WP = [], START_DIR, END_DIR, START_EXT, END_EXT, extSet = new Set(), ROAD_PTS = [];
@@ -733,7 +753,8 @@ const Render3D = (() => {
       return own.get(key);
     };
     const group = new THREE.Group(), body = new THREE.Group(); group.add(body);
-    const v = { e, group, body, mats, parts: {}, barH: 0.8, yaw: -e.moveAngle, phase: Math.random() * 10 };
+    // animT: the enemy's own animation clock, which runs slower while it's slowed
+    const v = { e, group, body, mats, parts: {}, barH: 0.8, yaw: -e.moveAngle, phase: Math.random() * 10, animT: 0, frost: 0 };
     const r = e.radius / T;
     switch (e.type) {
       case 'Scout': {
@@ -869,6 +890,7 @@ const Render3D = (() => {
         glow = glowSprite('#ffffff', 0.35, 0.7); break;
       case 'Freeze':
         core = new THREE.Mesh(G('ice', () => new THREE.OctahedronGeometry(0.06)), phong('#dff4ff', { emissive: '#9fd8ff' }));
+        core.scale.set(0.8, 1.6, 0.8);   // a long shard rather than a bead
         glow = glowSprite('#9fd8ff', 0.5, 0.8); break;
       case 'Rapid':
         core = new THREE.Mesh(G('rBullet', () => new THREE.SphereGeometry(0.035, 6, 4)), phong('#ffd1e6', { emissive: '#ff8fc0' }));
@@ -881,9 +903,17 @@ const Render3D = (() => {
     const tv = towerViews.get(p.sourceTower);
     let h0 = 0.8;
     if (tv) { tv.tip.getWorldPosition(_tmp); h0 = _tmp.y; }
-    const v = { g, sx: p.x, sy: p.y, h0, lx: p.x, ly: p.y, smokeT: 0 };
+    const v = { g, core, sx: p.x, sy: p.y, h0, lx: p.x, ly: p.y, smokeT: 0 };
     scene.add(g); projViews.set(p, v);
     return v;
+  }
+  // A Freeze shot breaking: on its target, or in mid-air if the target died first
+  function shatter(pos) {
+    const { x, y, z } = pos, ground = Math.max(0, groundAt(x, z));
+    flash(x, y, z, 0.8, 0.18, '#cfefff', 0.9);
+    for (let i = 0; i < 8; i++) debris.emit(x, y, z, rand(-1.1, 1.1), rand(0.4, 1.6), rand(-1.1, 1.1), pick(['#eaf8ff', '#bfe8ff', '#8fcfff']), rand(0.035, 0.065), rand(0.5, 0.8));
+    for (let i = 0; i < 14; i++) sparks.emit(x, y, z, rand(-1.4, 1.4), rand(-0.2, 1.2), rand(-1.4, 1.4), i % 2 ? '#ffffff' : '#9fd8ff', rand(0.35, 0.6), 1.5);
+    ring(x, ground + 0.03, z, 0.6, 0.35, '#bfe8ff', 0.7);
   }
 
   // ─── Particle systems ──────────────────────────────────────────────────────
@@ -1206,8 +1236,16 @@ const Render3D = (() => {
       const f = Math.max(0, t.flashTimer / 0.08);
       if (t.type === 'Freeze') {
         v.spin.rotation.y = t.spinAngle; v.spin.position.y = 0.64 + Math.sin(time * 2) * 0.04;
+        v.spin.scale.setScalar(1 + 0.3 * f);                     // crystal pulses on each shot
         v.orbit.rotation.y = -t.spinAngle * 1.5;
         v.glow.material.opacity = 0.45 + 0.4 * f;
+        // flashTimer jumps back up when the tower fires: send a frost ring out from the crystal
+        if (t.flashTimer > (v.prevFlash || 0) + 0.01) {
+          v.tip.getWorldPosition(_tmp);
+          ring(_tmp.x, _tmp.y, _tmp.z, 0.75, 0.35, '#bfe8ff', 0.8);
+          for (let i = 0; i < 6; i++) sparks.emit(_tmp.x, _tmp.y, _tmp.z, rand(-0.8, 0.8), rand(-0.2, 0.6), rand(-0.8, 0.8), '#e6f8ff', rand(0.3, 0.5), 0.5);
+        }
+        v.prevFlash = t.flashTimer;
       } else if (t.type === 'Rapid') {
         v.spin.rotation.x = t.spinAngle * 2.5;
       } else if (t.type === 'Laser') {
@@ -1236,26 +1274,48 @@ const Render3D = (() => {
       v.group.position.set(x, 0, z);
       v.yaw = lerpAngle(v.yaw, -e.moveAngle, kYaw);
       v.group.rotation.y = v.yaw;
-      ANIM[e.type](v, time, dt);
+      // Walk / hover cycles run at the enemy's current speed, so slowed enemies visibly trudge
+      const adt = dt * (e.slowFactor || 1);
+      v.animT += adt;
+      ANIM[e.type](v, v.animT, adt);
       if (v.parts.modRing && e.waveMod === 'Haste') v.parts.modRing.material.opacity = 0.45 + 0.4 * Math.sin(time * 10);
       const h = hitState.get(e), f = h ? h.flash / 0.09 : 0, slowed = e.slowTimer > 0;
       for (const m of v.mats) {
         const b = m.userData.baseEm;
         m.emissive.setRGB(b.r + (slowed ? 0.12 : 0) + f, b.g + (slowed ? 0.26 : 0) + f, b.b + (slowed ? 0.45 : 0) + f);
       }
+      // Frost patch: forms quickly when the slow starts, melts over the slow's last 0.4s
+      const frostGoal = slowed ? Math.min(1, e.slowTimer / 0.4) : 0;
+      v.frost += (frostGoal - v.frost) * Math.min(1, dt * (frostGoal > v.frost ? 10 : 6));
+      if (v.frost > 0.01 && !v.parts.frost) {
+        const m = new THREE.Mesh(G('frostPatch', () => new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2)),
+          new THREE.MeshBasicMaterial({ map: FROST, transparent: true, depthWrite: false, opacity: 0, polygonOffset: true, polygonOffsetFactor: -2 }));
+        m.position.y = 0.025; m.renderOrder = 2;
+        v.parts.frost = m; v.group.add(m);
+      }
+      if (v.parts.frost) {
+        const fp = v.parts.frost, size = Math.max(1.05, e.radius / T * 4);   // wider than the body so it shows around it
+        fp.visible = v.frost > 0.01;
+        fp.material.opacity = v.frost;
+        fp.scale.setScalar(size * (0.7 + 0.3 * v.frost));
+      }
       if (dt > 0) {
         if (e.type === 'Speeder' && Math.random() < 0.6) {
           const bx = x - Math.cos(e.moveAngle) * 0.35, bz = z - Math.sin(e.moveAngle) * 0.35;
           sparks.emit(bx, 0.27, bz, rand(-0.2, 0.2), rand(0, 0.3), rand(-0.2, 0.2), '#ffb04a', 0.3, 0);
         }
-        if (slowed && Math.random() < 0.15) sparks.emit(x + rand(-0.2, 0.2), rand(0.2, 0.6), z + rand(-0.2, 0.2), 0, 0.3, 0, '#bfe8ff', 0.6, 0);
+        // Snowflakes drifting down off slowed enemies
+        if (slowed && Math.random() < 0.18) sparks.emit(x + rand(-0.25, 0.25), rand(0.6, 1.0), z + rand(-0.25, 0.25), rand(-0.1, 0.1), 0, rand(-0.1, 0.1), '#eaf6ff', rand(0.6, 0.9), 1.2);
         if (e.type === 'Healer' && Math.random() < 0.12) sparks.emit(x + rand(-0.4, 0.4), 0.3, z + rand(-0.4, 0.4), 0, 0.8, 0, '#7dffb2', 0.9, 0);
       }
     }
   }
   function syncProjectiles(state, dt) {
     const alive = new Set(state.projectiles);
-    for (const [p, v] of projViews) if (!alive.has(p)) { scene.remove(v.g); disposeTree(v.g); projViews.delete(p); }
+    for (const [p, v] of projViews) if (!alive.has(p)) {
+      if (p.source === 'Freeze') shatter(v.g.position);
+      scene.remove(v.g); disposeTree(v.g); projViews.delete(p);
+    }
     for (const p of state.projectiles) {
       const v = projViews.get(p) || buildProjectile(p);
       const tx = p.target.alive ? p.target.x : p.x, ty = p.target.alive ? p.target.y : p.y;
@@ -1266,6 +1326,15 @@ const Render3D = (() => {
       if (p.x !== v.lx || p.y !== v.ly) v.g.rotation.y = -Math.atan2(p.y - v.ly, p.x - v.lx);
       v.lx = p.x; v.ly = p.y;
       if (p.source === 'Cannon' && dt > 0 && (v.smokeT -= dt) <= 0) { v.smokeT = 0.05; puff(v.g.position.x, y, v.g.position.z, 0.12, 0.5, '#9a9a9a', 0.35); }
+      if (p.source === 'Freeze' && dt > 0) {
+        v.core.rotation.x += dt * 14; v.core.rotation.z += dt * 9;   // tumbling shard
+        if ((v.smokeT -= dt) <= 0) {                                  // frost-mist trail
+          v.smokeT = 0.025;
+          const { x: gx, z: gz } = v.g.position;
+          sparks.emit(gx + rand(-0.04, 0.04), y + rand(-0.04, 0.04), gz + rand(-0.04, 0.04), rand(-0.15, 0.15), rand(-0.1, 0.1), rand(-0.15, 0.15), pick(['#dff4ff', '#9fd8ff']), rand(0.25, 0.4), 0.3);
+          if (Math.random() < 0.3) puff(gx, y, gz, 0.07, 0.35, '#dff4ff', 0.25);
+        }
+      }
     }
   }
   const _A = new THREE.Vector3(), _B = new THREE.Vector3();

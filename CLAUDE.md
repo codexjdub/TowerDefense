@@ -257,6 +257,13 @@ effects here rather than in game logic. Effect pools: `sparks` (Points), `debris
 (InstancedMesh), `smoke` / `flashes` / `rings` / `decals` (sprite pools), and `ambient`
 (the theme's fireflies, leaves, dust, snow or embers).
 
+**Freeze visuals** (all in render3d.js, no game hooks): the crystal pulses and sends out a
+frost ring when `flashTimer` jumps (a shot); the shard tumbles and trails frost mist;
+`shatter()` runs when a Freeze projectile's view is removed (on hit, or mid-air if its
+target died). Slowed enemies get a frost patch (`FROST` texture, fades with the last 0.4s
+of `slowTimer`), a blue tint and falling snowflakes. Each enemy view has its own
+animation clock (`animT`) advanced by `dt * slowFactor`, so slowed enemies walk slowly.
+
 **Input:** `pickTile(clientX, clientY)` raycasts the grass, road and tower models (ignoring
 glow sprites, which Three.js would hit even where transparent) and returns `{col, row}` or
 null. game.js wraps it in `tileAt()`, which returns null over the sidebar or the menu.
