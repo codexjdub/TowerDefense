@@ -194,9 +194,18 @@ Endless HP scaling: `scale = 1 + tier * ENDLESS_HP_SCALE` where `ENDLESS_HP_SCAL
 
 ## Maps
 
-`MAP_CONFIGS` in map.js: 12 maps, each `{ name, difficulty, diffColor, desc, waypoints }`.
+`MAP_CONFIGS` in map.js: 12 maps, each `{ name, theme, difficulty, diffColor, desc, waypoints }`.
 The difficulty label is display-only. Everything else (path tiles, 3D island, road,
-scenery, portal, castle, menu thumbnail) is derived from the waypoints. Rules for new maps:
+scenery, portal, castle, menu thumbnail) is derived from the waypoints.
+
+`theme` picks a look from `THEMES` (map.js): `meadow`, `autumn`, `desert`, `snow`,
+`volcanic`. A theme holds palettes for the grass, road, cliff sides and scenery (plus tree
+density and conifer share), the sky gradient and fog, light colours, the ambient particle
+mode (`firefly` / `leaf` / `dust` / `snow` / `ember`) and the menu thumbnail colours.
+Themes other than meadow are written as overrides of `MEADOW` via `withMeadow()`, so a new
+theme only lists what differs. A `road.glow` colour adds glowing cracks (emissive map).
+render3d.js reads the theme in `applyTheme()` when a map is built (`TH`); `mapTheme(i)`
+returns it. Rules for new maps:
 - Waypoints are tile coords (`col` 0–19, `row` 0–13); consecutive waypoints must share a
   row or a column (straight segments only).
 - The first waypoint must be on a board edge with the first segment pointing away from
@@ -238,14 +247,15 @@ It only **reads** game state. Each frame `Render3D.render(state, rawDt)`:
 `GRASS_Y = 0.18`, island bottom at -1.6, with a one-tile border ring around the board.
 
 **Assets:** none. Textures (grass, road, cliffs, portal swirl, glows) are painted on
-canvases at startup; models are low-poly Phong primitives built in code (`BUILD` table for
+canvases, in the current map's theme colours (rebuilt with the map); models are low-poly Phong primitives built in code (`BUILD` table for
 towers, `buildEnemy`). Reused geometries/materials go through `G(key, fn)` / the `SHARED`
 set, which `disposeTree()` skips.
 
 **Event hooks** called from game.js: `onSpawn(e)`, `onDeath(e)`, `onEscape(e)`,
 `onExplosion(x, y)` (Cannon AOE), `onPlace(t)`, `onUpgrade(t)`, `onSell(t)`. Add new
 effects here rather than in game logic. Effect pools: `sparks` (Points), `debris`
-(InstancedMesh), `smoke` / `flashes` / `rings` / `decals` (sprite pools), `fireflies`.
+(InstancedMesh), `smoke` / `flashes` / `rings` / `decals` (sprite pools), and `ambient`
+(the theme's fireflies, leaves, dust, snow or embers).
 
 **Input:** `pickTile(clientX, clientY)` raycasts the grass, road and tower models (ignoring
 glow sprites, which Three.js would hit even where transparent) and returns `{col, row}` or
@@ -353,9 +363,21 @@ Leaderboard: `saveScore()` / `getScores()` → `'td_lb'` (top 10, regular).
   Always sync to `/tmp/td-game` before starting the preview server.
 - `TOWER_INFO_Y` is computed at module load time from `Object.keys(TOWER_DEFS).length`,
   so adding/removing towers automatically adjusts all panel positions.
-- Any exception inside `draw()` stops the game loop (the next `requestAnimationFrame` is
-  never scheduled), which looks like a freeze. Check the console first.
-  
+- `gameLoop` schedules the next frame first and runs `update`/`draw` in a try/catch, so an
+  exception costs one frame instead of freezing the game. Each distinct error is logged to
+  the console once (`Error in the game loop…`), so a bug that fires every frame can look
+  like a single glitch: check the console. `draw()` starts with `ctx.reset()`, so a frame
+  that threw halfway can't leave 2D state behind. The `step()` helper calls
+  `update`/`draw` directly, so errors there still throw (useful when testing).
+ 
+## Editing code
+
+Always get explicit confirmation from the user before editing code. Describe the intended code change and wait for approval before modifying source files.
+
+## Presenting options
+
+Number anything the user might pick from — questions, options, brainstorms, suggestion lists, audit findings, feature ideas. Letter the options within a numbered question (`a.`, `b.`, …). Never number both — replies like `1, 1` are ambiguous. Bullets only for inert lists (e.g. "files I changed") where no item is a candidate for follow-up.
+
 ## Git identity and email privacy
 
 Never let a real email reach anything published — commit metadata included. Commit with the GitHub noreply address; the author name is free.

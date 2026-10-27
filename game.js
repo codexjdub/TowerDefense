@@ -638,7 +638,11 @@ function startWave() {
 let lastTime  = 0;
 let _fpsFrames = 0, _fpsTime = 0, _fps = 0;
 
+const loggedErrors = new Set();   // stacks already reported, so a bug that repeats every frame logs once
+
 function gameLoop(ts) {
+  // Schedule the next frame first: an exception below then costs one frame, not the whole game
+  requestAnimationFrame(gameLoop);
   const rawDt = Math.min((ts - lastTime) / 1000, 0.05);
   lastTime    = ts;
 
@@ -651,9 +655,16 @@ function gameLoop(ts) {
     _fpsTime   = 0;
   }
 
-  update(rawDt);
-  draw(rawDt);
-  requestAnimationFrame(gameLoop);
+  try {
+    update(rawDt);
+    draw(rawDt);
+  } catch (err) {
+    const key = String((err && err.stack) || err);
+    if (!loggedErrors.has(key)) {
+      loggedErrors.add(key);
+      console.error('Error in the game loop (the game keeps running):', err);
+    }
+  }
 }
 
 // ─── Update ───────────────────────────────────────────────────────────────────
@@ -871,6 +882,10 @@ function draw(rawDt) {
   updateHoverTile();
   Render3D.render(state, rawDt);
 
+  // Start from clean 2D state: a frame that threw halfway can leave save()s unbalanced,
+  // a stray globalAlpha or a transform behind (reset() also clears; older browsers lack it)
+  if (ctx.reset) ctx.reset();
+  ctx.globalAlpha = 1;
   ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
   ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
 

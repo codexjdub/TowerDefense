@@ -45,7 +45,8 @@ const Render3D = (() => {
   scene.fog = new THREE.Fog(0x121a2a, 40, 80);
   const camera = new THREE.PerspectiveCamera(30, GAME_W / CANVAS_H, 0.1, 200);
 
-  scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x2f3b22, 0.44));
+  const hemi = new THREE.HemisphereLight(0xcfe3ff, 0x2f3b22, 0.44);
+  scene.add(hemi);
   const sun = new THREE.DirectionalLight(0xfff0d8, 0.7);
   sun.position.set(-9, 17, -7);
   sun.castShadow = true;
@@ -66,7 +67,7 @@ const Render3D = (() => {
       const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
       for (const m of mats) {
         if (SHARED.has(m)) continue;
-        if (m.map && !SHARED.has(m.map)) m.map.dispose();
+        for (const tex of [m.map, m.emissiveMap]) if (tex && !SHARED.has(tex)) tex.dispose();
         m.dispose();
       }
     });
@@ -127,30 +128,33 @@ const Render3D = (() => {
     return out;
   }
 
+  // The current map's look (THEMES in map.js), set by buildMap before anything is painted
+  let TH = MEADOW;
+
   function paintGrass() {
-    const W = BW * PX, H = BH * PX, c = makeCanvas(W, H), ctx = c.getContext('2d');
+    const W = BW * PX, H = BH * PX, c = makeCanvas(W, H), ctx = c.getContext('2d'), t = TH.grass;
     const rng = mulberry32(90210 + CURRENT_MAP_INDEX * 977), R = (a, b) => a + rng() * (b - a), u = PX / 64;
     const onRoad = (x, y) => isRoad(Math.floor(x / PX) - 1, Math.floor(y / PX) - 1);
-    ctx.fillStyle = '#4b8537'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = t.base; ctx.fillRect(0, 0, W, H);
     for (let i = 0; i < 120; i++) {
       const x = R(0, W), y = R(0, H), r = R(50, 170) * u, light = rng() < 0.5;
-      const col = light ? '122,178,76' : '42,96,40', a = light ? R(0.10, 0.22) : R(0.12, 0.26);
+      const col = light ? t.light : t.dark, a = light ? R(0.10, 0.22) : R(0.12, 0.26);
       const g = ctx.createRadialGradient(x, y, 0, x, y, r);
       g.addColorStop(0, `rgba(${col},${a})`); g.addColorStop(1, `rgba(${col},0)`);
       ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2);
     }
     ctx.lineCap = 'round'; ctx.lineWidth = 1.2 * u;
-    for (const col of ['rgba(34,82,30,0.55)', 'rgba(126,184,86,0.45)', 'rgba(64,122,50,0.7)', 'rgba(150,200,100,0.3)']) {
+    for (const col of t.bladeCols) {
       ctx.beginPath();
-      for (let i = 0; i < 3600; i++) {
+      for (let i = 0; i < t.blades; i++) {
         const x = R(0, W), y = R(0, H), h = R(3, 7) * u, lean = R(-2.2, 2.2) * u;
         if (onRoad(x, y)) continue;
         ctx.moveTo(x, y); ctx.lineTo(x + lean, y - h);
       }
       ctx.strokeStyle = col; ctx.stroke();
     }
-    ctx.strokeStyle = 'rgba(30,72,28,0.8)'; ctx.lineWidth = 1.5 * u; ctx.beginPath();
-    for (let i = 0; i < 230; i++) {
+    ctx.strokeStyle = t.tuft; ctx.lineWidth = 1.5 * u; ctx.beginPath();
+    for (let i = 0; i < t.tufts; i++) {
       const x = R(0, W), y = R(0, H), n = 3 + Math.floor(rng() * 3);
       if (onRoad(x, y)) continue;
       for (let j = 0; j < n; j++) {
@@ -159,8 +163,8 @@ const Render3D = (() => {
       }
     }
     ctx.stroke();
-    const petals = ['#f4efe1', '#f6d04d', '#e98bb0', '#b8a4f2'];
-    for (let i = 0; i < 110; i++) {
+    const petals = t.flowers;
+    for (let i = 0; i < t.flowerCount; i++) {
       const cx = R(0, W), cy = R(0, H), col = petals[Math.floor(rng() * petals.length)], n = 2 + Math.floor(rng() * 4);
       for (let j = 0; j < n; j++) {
         const x = cx + R(-9, 9) * u, y = cy + R(-7, 7) * u;
@@ -169,23 +173,24 @@ const Render3D = (() => {
         ctx.fillStyle = col === '#f6d04d' ? '#b86e12' : '#f3c33a'; ctx.beginPath(); ctx.arc(x, y, 0.8 * u, 0, TAU); ctx.fill();
       }
     }
-    strokePoly(ctx, ROAD_PTS, PX * 1.28, 'rgba(34,58,22,0.4)');
+    strokePoly(ctx, ROAD_PTS, PX * 1.28, t.edge);
     return c;
   }
+  // Returns the road texture canvas, plus a glow canvas (emissive map) when the theme has one
   function paintRoad() {
-    const W = BW * PX, H = BH * PX, c = makeCanvas(W, H), ctx = c.getContext('2d');
+    const W = BW * PX, H = BH * PX, c = makeCanvas(W, H), ctx = c.getContext('2d'), t = TH.road;
     const rng = mulberry32(777 + CURRENT_MAP_INDEX), R = (a, b) => a + rng() * (b - a), u = PX / 64;
-    ctx.fillStyle = '#b48e58'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = t.base; ctx.fillRect(0, 0, W, H);
     const samples = samplePoly(ROAD_PTS, 6 * u);
     for (const s of samples) {
       if (rng() < 0.55) continue;
       const off = R(-0.42, 0.42) * PX, x = s.x + s.nx * off, y = s.y + s.ny * off, r = R(12, 36) * u, light = rng() < 0.5;
-      const col = light ? '222,192,132' : '134,100,58';
+      const col = light ? t.light : t.dark;
       const g = ctx.createRadialGradient(x, y, 0, x, y, r);
       g.addColorStop(0, `rgba(${col},${R(0.18, 0.35)})`); g.addColorStop(1, `rgba(${col},0)`);
       ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2);
     }
-    for (const col of ['rgba(106,78,40,0.55)', 'rgba(236,216,168,0.5)']) {
+    for (const col of t.specks) {
       ctx.fillStyle = col; ctx.beginPath();
       for (const s of samples) for (let j = 0; j < 3; j++) {
         const off = R(-0.5, 0.5) * PX, x = s.x + s.nx * off + R(-3, 3) * u, y = s.y + s.ny * off + R(-3, 3) * u, r = R(0.6, 1.5) * u;
@@ -198,18 +203,18 @@ const Render3D = (() => {
       const off = R(-0.38, 0.38) * PX, x = s.x + s.nx * off, y = s.y + s.ny * off, r = R(1.8, 3.4) * u;
       ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(x + r * 0.3, y + r * 0.4, r, r * 0.75, 0, 0, TAU); ctx.fill();
       const g = ctx.createRadialGradient(x - r * 0.35, y - r * 0.4, 0, x, y, r);
-      g.addColorStop(0, '#d8cdb8'); g.addColorStop(1, '#7d705c');
+      g.addColorStop(0, t.pebble[0]); g.addColorStop(1, t.pebble[1]);
       ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(x, y, r, r * 0.75, 0, 0, TAU); ctx.fill();
     }
     // Wheel ruts: two thin bands either side of the centre line
     const band = makeCanvas(W, H), b = band.getContext('2d');
-    strokePoly(b, ROAD_PTS, 0.72 * PX, '#5a4020');
+    strokePoly(b, ROAD_PTS, 0.72 * PX, t.rut);
     b.globalCompositeOperation = 'destination-out';
     strokePoly(b, ROAD_PTS, 0.6 * PX, '#000');
     ctx.globalAlpha = 0.22; ctx.drawImage(band, 0, 0); ctx.globalAlpha = 1;
     // Worn direction chevrons
     const ANG = { right: 0, down: Math.PI / 2, left: Math.PI, up: -Math.PI / 2 };
-    ctx.fillStyle = 'rgba(90,62,28,0.2)';
+    ctx.fillStyle = t.chevron;
     PATH_DIRECTIONS.forEach((dir, key) => {
       const [cc, rr] = key.split(',').map(Number);
       if ((cc + rr) % 2) return;
@@ -217,12 +222,33 @@ const Render3D = (() => {
       ctx.beginPath(); ctx.moveTo(8 * u, 0); ctx.lineTo(-5 * u, -8 * u); ctx.lineTo(-1 * u, 0); ctx.lineTo(-5 * u, 8 * u); ctx.closePath(); ctx.fill();
       ctx.restore();
     });
-    return c;
+    // Glowing cracks (volcanic): drawn on both the colour map and a black emissive map
+    let glow = null;
+    if (t.glow) {
+      glow = makeCanvas(W, H);
+      const gl = glow.getContext('2d');
+      gl.fillStyle = '#000'; gl.fillRect(0, 0, W, H);
+      for (const k of [ctx, gl]) { k.strokeStyle = t.glow; k.lineCap = 'round'; k.lineJoin = 'round'; }
+      const crack = mulberry32(4242 + CURRENT_MAP_INDEX), C = (a, b) => a + crack() * (b - a);
+      for (const s of samples) {
+        if (crack() > 0.1) continue;
+        let x = s.x + s.nx * C(-0.3, 0.3) * PX, y = s.y + s.ny * C(-0.3, 0.3) * PX, a = C(0, TAU);
+        const pts = [[x, y]];
+        for (let i = 0, n = 3 + Math.floor(crack() * 4); i < n; i++) {
+          a += C(-0.9, 0.9); x += Math.cos(a) * C(5, 11) * u; y += Math.sin(a) * C(5, 11) * u; pts.push([x, y]);
+        }
+        const w = C(1.2, 2.6) * u;
+        for (const k of [ctx, gl]) {
+          k.lineWidth = w; k.beginPath(); pts.forEach(([px, py], i) => i ? k.lineTo(px, py) : k.moveTo(px, py)); k.stroke();
+        }
+      }
+    }
+    return { map: c, glow };
   }
   function paintSide() {
     const W = 64, H = 512, c = makeCanvas(W, H), ctx = c.getContext('2d'), rng = mulberry32(31);
     const lip = Math.round(H * 0.045);
-    const bands = ['#6b4a2b', '#5d3f24', '#74522f', '#4f351e', '#5a3d22', '#43301c', '#503820'];
+    const t = TH.side, bands = t.bands;
     let y = lip - 4;
     while (y < H) { const h = 18 + rng() * 60; ctx.fillStyle = bands[Math.floor(rng() * bands.length)]; ctx.fillRect(0, y, W, h + 1); y += h; }
     for (let i = 0; i < 500; i++) {
@@ -231,15 +257,15 @@ const Render3D = (() => {
     }
     for (let i = 0; i < 22; i++) {
       const x = rng() * W, yy = lip + 20 + rng() * (H - lip - 20), r = 2 + rng() * 4;
-      ctx.fillStyle = '#7e7466'; ctx.beginPath(); ctx.ellipse(x, yy, r, r * 0.7, 0, 0, TAU); ctx.fill();
+      ctx.fillStyle = t.stone; ctx.beginPath(); ctx.ellipse(x, yy, r, r * 0.7, 0, 0, TAU); ctx.fill();
     }
     const g = ctx.createLinearGradient(0, lip, 0, H);
     g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.55)');
     ctx.fillStyle = g; ctx.fillRect(0, lip, W, H - lip);
-    ctx.fillStyle = '#3f7a30'; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(W, 0);
+    ctx.fillStyle = t.lip; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(W, 0);
     for (let x = W; x >= 0; x -= 4) ctx.lineTo(x, lip + (rng() - 0.3) * 6);
     ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#5c9c45'; ctx.fillRect(0, 0, W, 3);
+    ctx.fillStyle = t.lipHi; ctx.fillRect(0, 0, W, 3);
     return c;
   }
   function paintSwirl() {
@@ -337,32 +363,36 @@ const Render3D = (() => {
     grassMesh = mk(top, new THREE.MeshLambertMaterial({ map: toTexture(paintGrass()) }));
     parent.add(grassMesh);
     parent.add(mk(side, new THREE.MeshLambertMaterial({ map: toTexture(paintSide()) })));
-    roadMesh = new THREE.Mesh(new THREE.PlaneGeometry(BW, BH).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ map: toTexture(paintRoad()) }));
+    const road = paintRoad();
+    const roadMat = new THREE.MeshLambertMaterial({ map: toTexture(road.map) });
+    if (road.glow) Object.assign(roadMat, { emissive: new THREE.Color('#ffffff'), emissiveMap: toTexture(road.glow) });
+    roadMesh = new THREE.Mesh(new THREE.PlaneGeometry(BW, BH).rotateX(-Math.PI / 2), roadMat);
     roadMesh.receiveShadow = true;
     parent.add(roadMesh);
   }
 
+  const pickFrom = (list, rng) => list[Math.floor(rng() * list.length)];
   function rock(parent, x, y, z, s, rng) {
-    const m = mesh(G('rock', () => new THREE.DodecahedronGeometry(0.2, 0)), phong(['#7e8189', '#6f717b', '#8d8e86'][Math.floor(rng() * 3)]), x, y, z);
+    const m = mesh(G('rock', () => new THREE.DodecahedronGeometry(0.2, 0)), phong(pickFrom(TH.scenery.rocks, rng)), x, y, z);
     m.scale.set(s * (0.9 + rng() * 0.5), s * (0.5 + rng() * 0.3), s * (0.8 + rng() * 0.4));
     m.rotation.set(rng() * 0.4, rng() * TAU, rng() * 0.4);
     parent.add(m);
     return m;
   }
-  const GREENS = ['#2f6b2a', '#3b7d31', '#4a8f3a', '#2a5e2a'];
   function tree(parent, x, z, s, rng) {
+    const sc = TH.scenery, leaves = sc.foliage;
     const g = new THREE.Group(); g.position.set(x, GRASS_Y, z); g.scale.setScalar(s); g.rotation.y = rng() * TAU;
-    g.add(mesh(G('trunk', () => new THREE.CylinderGeometry(0.05, 0.08, 0.36, 6)), phong('#6b4a2b'), 0, 0.18, 0));
-    if (rng() < 0.55) {
-      for (let i = 0; i < 3; i++) g.add(mesh(G('cone' + i, () => new THREE.ConeGeometry(0.34 - i * 0.08, 0.42, 7)), phong(GREENS[i % 4]), 0, 0.42 + i * 0.22, 0));
+    g.add(mesh(G('trunk', () => new THREE.CylinderGeometry(0.05, 0.08, 0.36, 6)), phong(sc.trunk), 0, 0.18, 0));
+    if (rng() < sc.conifers) {
+      for (let i = 0; i < 3; i++) g.add(mesh(G('cone' + i, () => new THREE.ConeGeometry(0.34 - i * 0.08, 0.42, 7)), phong(leaves[i % leaves.length]), 0, 0.42 + i * 0.22, 0));
     } else {
-      g.add(mesh(G('blob', () => new THREE.IcosahedronGeometry(0.3, 0)), phong(GREENS[Math.floor(rng() * 4)]), 0, 0.55, 0));
-      g.add(mesh(G('blob2', () => new THREE.IcosahedronGeometry(0.2, 0)), phong(GREENS[Math.floor(rng() * 4)]), 0.14, 0.72, 0.06));
+      g.add(mesh(G('blob', () => new THREE.IcosahedronGeometry(0.3, 0)), phong(pickFrom(leaves, rng)), 0, 0.55, 0));
+      g.add(mesh(G('blob2', () => new THREE.IcosahedronGeometry(0.2, 0)), phong(pickFrom(leaves, rng)), 0.14, 0.72, 0.06));
     }
     parent.add(g);
   }
   function bush(parent, x, z, s, rng) {
-    const m = mesh(G('bush', () => new THREE.IcosahedronGeometry(0.2, 0)), phong(GREENS[Math.floor(rng() * 3)]), x, GRASS_Y + 0.1 * s, z);
+    const m = mesh(G('bush', () => new THREE.IcosahedronGeometry(0.2, 0)), phong(pickFrom(TH.scenery.bushes, rng)), x, GRASS_Y + 0.1 * s, z);
     m.scale.set(s * 1.2, s * 0.8, s); m.rotation.y = rng() * TAU;
     parent.add(m);
   }
@@ -378,11 +408,11 @@ const Render3D = (() => {
         if (rng() < 0.3) rock(parent, x + (rng() - 0.5) * 0.6, GRASS_Y + 0.04, z, 0.9 + rng() * 0.6, rng);
         continue;
       }
-      const roll = rng();
-      if (roll < 0.62) {
+      const roll = rng(), trees = TH.scenery.trees;   // rocks take up most of what trees leave
+      if (roll < trees) {
         tree(parent, x + (rng() - 0.5) * 0.4, z + (rng() - 0.5) * 0.4, 0.85 + rng() * 0.5, rng);
         if (rng() < 0.35) tree(parent, x + (rng() - 0.5) * 0.7, z + (rng() - 0.5) * 0.7, 0.6 + rng() * 0.3, rng);
-      } else if (roll < 0.85) {
+      } else if (roll < trees + (1 - trees) * 0.6) {
         rock(parent, x + (rng() - 0.5) * 0.4, GRASS_Y + 0.05, z + (rng() - 0.5) * 0.4, 1 + rng() * 1.2, rng);
       } else bush(parent, x, z, 1 + rng() * 0.5, rng);
     }
@@ -461,8 +491,19 @@ const Render3D = (() => {
     s.fade = 1 - 0.7 * t * t * (3 - 2 * t);   // 1 → 0.3 as it moves into the foreground
     for (const m of s.mats) m.opacity = m.userData.opacity * s.fade;
   }
+  function applyTheme() {
+    TH = mapTheme(CURRENT_MAP_INDEX);
+    const l = TH.light;
+    hemi.color.setHex(l.sky); hemi.groundColor.setHex(l.ground); hemi.intensity = l.hemi;
+    sun.color.setHex(l.sun); sun.intensity = l.sunI;
+    fillLight.color.setHex(l.fill); fillLight.intensity = l.fillI;
+    scene.fog.color.setHex(TH.sky.fog);
+    canvas3d.style.background = TH.sky.css;
+    ambient.setTheme(TH.ambient);
+  }
   function buildMap() {
     if (mapGroup) { scene.remove(mapGroup); disposeTree(mapGroup); }
+    applyTheme();
     computeBoard();
     mapGroup = new THREE.Group();
     buildGround(mapGroup);
@@ -970,21 +1011,52 @@ const Render3D = (() => {
     rings.emit(life, (o, d) => { o.position.set(x, y, z); o.material.color.set(hex); o.scale.set(0.01, 1, 0.01); Object.assign(d, { r, a }); });
   }
 
-  // Fireflies drifting over the board
-  const fireflies = (() => {
-    const N = 55, pos = new Float32Array(N * 3), col = new Float32Array(N * 3), rng = mulberry32(11);
-    const seeds = Array.from({ length: N }, () => ({ x: rng() * 20 - 10, z: rng() * 14 - 7, y: 0.4 + rng() * 1.1, p: rng() * TAU, s: 0.3 + rng() * 0.5, c: rng() < 0.55 ? [1, 0.85, 0.3] : [0.65, 1, 0.8] }));
+  // Ambient particles over the board, set by the map's theme: fireflies (meadow), falling
+  // leaves (autumn), drifting dust (desert), snow, or rising embers (volcanic).
+  // Positions are a pure function of time, so pausing freezes them.
+  const ambient = (() => {
+    const MAX = 240, pos = new Float32Array(MAX * 3), col = new Float32Array(MAX * 3);
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
     g.setAttribute('color', new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage));
-    const pts = new THREE.Points(g, new THREE.PointsMaterial({ size: 0.13, map: DOT, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    const mat = new THREE.PointsMaterial({ size: 0.13, map: DOT, vertexColors: true, transparent: true, depthWrite: false });
+    const pts = new THREE.Points(g, mat);
     pts.frustumCulled = false; scene.add(pts);
+    let mode = 'firefly', seeds = [];
+    const wrap = (v, h) => ((v % h) + h) % h;
     return {
+      setTheme(a) {
+        const rng = mulberry32(11), n = Math.min(MAX, a.count);
+        mode = a.mode;
+        seeds = Array.from({ length: n }, () => ({ x: rng() * 22 - 11, z: rng() * 16 - 8, y: rng(), p: rng() * TAU,
+                                                   s: 0.3 + rng() * 0.5, c: a.colors[Math.floor(rng() * a.colors.length)] }));
+        mat.size = a.size; mat.opacity = a.opacity;
+        mat.blending = a.additive ? THREE.AdditiveBlending : THREE.NormalBlending; mat.needsUpdate = true;
+        g.setDrawRange(0, n);
+      },
       update(t) {
         seeds.forEach((s, i) => {
+          let x = s.x, y, z = s.z, a = 1;   // a: brightness (additive modes fade by darkening)
+          if (mode === 'snow') {
+            y = 4 - wrap(t * (0.5 + s.s * 0.6) + s.y * 4, 4);
+            x += Math.sin(t * 0.8 * s.s + s.p) * 0.4; z += Math.cos(t * 0.6 * s.s + s.p) * 0.3;
+          } else if (mode === 'leaf') {
+            y = 3 - wrap(t * (0.25 + s.s * 0.3) + s.y * 3, 3);
+            x += Math.sin(t * 1.5 * s.s + s.p) * 0.6; z += Math.cos(t * 1.1 * s.s + s.p) * 0.4;
+          } else if (mode === 'ember') {
+            y = wrap(t * (0.4 + s.s * 0.6) + s.y * 3, 3);
+            x += Math.sin(t * 2 * s.s + s.p) * 0.25; z += Math.cos(t * 1.7 * s.s + s.p) * 0.25;
+            a = (1 - y / 3) * (0.6 + 0.4 * Math.sin(t * 9 + s.p * 5));
+          } else if (mode === 'dust') {
+            y = 0.2 + s.y * 0.8 + Math.sin(t * s.s + s.p) * 0.1;
+            x = wrap(s.x + 11 + t * (0.6 + s.s), 22) - 11; z += Math.sin(t * 0.7 + s.p) * 0.4;
+          } else {                          // fireflies
+            y = 0.4 + s.y * 1.1 + Math.sin(t * s.s * 1.7 + s.p) * 0.15;
+            x += Math.sin(t * s.s + s.p) * 0.6; z += Math.cos(t * s.s * 0.8 + s.p) * 0.6;
+            a = Math.max(0, Math.sin(t * 2.2 + s.p * 3)) * 0.9;
+          }
           const j = i * 3;
-          pos[j] = s.x + Math.sin(t * s.s + s.p) * 0.6; pos[j + 1] = s.y + Math.sin(t * s.s * 1.7 + s.p) * 0.15; pos[j + 2] = s.z + Math.cos(t * s.s * 0.8 + s.p) * 0.6;
-          const a = Math.max(0, Math.sin(t * 2.2 + s.p * 3)) * 0.9;
+          pos[j] = x; pos[j + 1] = y; pos[j + 2] = z;
           col[j] = s.c[0] * a; col[j + 1] = s.c[1] * a; col[j + 2] = s.c[2] * a;
         });
         g.attributes.position.needsUpdate = true; g.attributes.color.needsUpdate = true;
@@ -1366,7 +1438,7 @@ const Render3D = (() => {
     updatePreview(state);
     updateBeams(dt, time);   // tip.getWorldPosition updates its own ancestors; render() updates the rest
     sparks.update(dt); debris.update(dt); smoke.update(dt); flashes.update(dt); rings.update(dt); decals.update(dt);
-    fireflies.update(time);
+    ambient.update(time);
     applyFade(portal); applyFade(gate);
     portal.glow.material.opacity = (0.45 + 0.15 * Math.sin(time * 3)) * portal.fade;
     gate.torches.forEach((tg, i) => { tg.material.opacity = (0.55 + 0.2 * Math.sin(time * 13 + i * 2) + 0.1 * Math.sin(time * 29)) * gate.fade; });
