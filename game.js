@@ -502,20 +502,20 @@ function handleSidebarClick(mx, my) {
 // ─── Tower info panel clicks ──────────────────────────────────────────────────
 function handleTowerActionClick(mx, my) {
   const t  = state.selectedTower;
-  const iy = TOWER_INFO_Y;
+  const iy = TOWER_INFO_Y, L = TOWER_INFO;   // layout shared with drawTowerInfo (ui.js)
 
   // Priority buttons
   const pKeys = ['first', 'last', 'strongest', 'weakest'];
   for (let i = 0; i < 4; i++) {
     const bx = UI_X + 10 + (i % 2) * 89;
-    const by = iy + 105 + Math.floor(i / 2) * 26;
+    const by = iy + L.prioY + Math.floor(i / 2) * L.prioRowH;
     if (mx >= bx && mx <= bx + 84 && my >= by && my <= by + 22) {
       t.priority = pKeys[i]; return;
     }
   }
 
   // Upgrade
-  const upY = iy + 159;
+  const upY = iy + L.upY;
   if (t.level < 3 && mx >= UI_X + 10 && mx <= UI_X + UI_WIDTH - 10 && my >= upY && my <= upY + 28) {
     const cost = t.upgradeCost;
     if (state.gold >= cost) {
@@ -527,7 +527,7 @@ function handleTowerActionClick(mx, my) {
   }
 
   // Sell (two-click confirmation)
-  const sellY = iy + 194;
+  const sellY = iy + L.sellY;
   if (mx >= UI_X + 10 && mx <= UI_X + UI_WIDTH - 10 && my >= sellY && my <= sellY + 28) {
     if (state.sellConfirm && state.sellConfirmTimer > 0) {
       // Second click — execute sell

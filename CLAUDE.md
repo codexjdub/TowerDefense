@@ -272,6 +272,22 @@ which fades over 0.2s (`fadingTrails`). `onExplosion` adds a rolling dust ring (
 take `vx`/`vz`), dirt that lies for about 2s, and a longer scorch. It sets `hop` on enemy
 views in the blast. Laser beams leave `burns` that cool from orange to scorch.
 
+**Deaths:** a shared burst plus per-type extras in `onDeath`:
+- Tank: a burning wreck from the `wrecks` pool, about 3s;
+- Healer: a green flash and a ring out to its 2.5-tile aura;
+- Speeder: wreckage thrown forward along `moveAngle`;
+- Soldier: its helmet flies off.
+
+**Boss entrance** (`onSpawn` → `bossEntrance`): a portal surge, a rumble and a ~1.6s
+camera close-up on the portal (`bossCam`, restored by `endBossCam`). `orbit`, `zoomBy` and
+`resetCamera` end it early. The camera move and rumble are skipped under
+`prefers-reduced-motion`.
+
+**Day/night:** `applyLight(k)` darkens the theme's lights, fog and sky toward night (k 0→1,
+with a translucent clear colour over the CSS sky). The menu cycles k once a minute
+(`menuClock`); everywhere else k = 0. Note that `render()` treats `state.speed` 0 as 1, so
+use `state.paused` to freeze effects for a screenshot.
+
 **Freeze visuals:** the crystal pulses on each shot, and the shard tumbles and trails frost
 mist. Slowed enemies get a frost patch (`FROST` texture, fades with the last 0.4s
 of `slowTimer`), a blue tint and falling snowflakes. Each enemy view has its own
@@ -339,8 +355,11 @@ two rows; a 13th starts a third row, which pushes the leaderboard near the botto
 Minimaps are painted once per map into an offscreen canvas (`miniMapCache` in map.js) and
 reused every frame.
 
-Tower info panel height = 236px. Priority buttons at `iy+105`, upgrade at `iy+159`,
-sell at `iy+194`. Two-click sell confirmation with 2.5s timeout.
+The selected-tower panel layout is `TOWER_INFO` (ui.js): height 276, a fixed 4-line hint
+slot at +83, priority buttons at +145 (rows 26 apart), upgrade at +199, sell at +234.
+`drawTowerInfo` and `handleTowerActionClick` both read it, so they can't drift apart.
+Hints wrap by measured width. Two-click sell confirmation with 2.5s timeout. Tower buttons
+show their stats right-aligned inside the button, on the name and cost rows.
 
 `particles.js` now only holds `Particle`, `rand()` and `spawnVictoryParticles()` (110
 confetti pieces, drawn after `drawVictory()` so they appear on top of the overlay).

@@ -532,13 +532,24 @@ const Render3D = (() => {
   }
   function applyTheme() {
     TH = mapTheme(CURRENT_MAP_INDEX);
-    const l = TH.light;
-    hemi.color.setHex(l.sky); hemi.groundColor.setHex(l.ground); hemi.intensity = l.hemi;
-    sun.color.setHex(l.sun); sun.intensity = l.sunI;
-    fillLight.color.setHex(l.fill); fillLight.intensity = l.fillI;
-    scene.fog.color.setHex(TH.sky.fog);
     canvas3d.style.background = TH.sky.css;
     ambient.setTheme(TH.ambient);
+    nightK = -1; applyLight(0);
+  }
+  // Lights, fog and sky for the current theme, darkened toward night by k (0 = day, 1 = night).
+  // Gameplay always uses k = 0; the menu turntable cycles it (see render).
+  const NIGHT = { sun: new THREE.Color(0x9fb4ff), sky: new THREE.Color(0x3a4a78), fog: new THREE.Color(0x070a14) };
+  let nightK = -1, menuClock = 0;
+  function applyLight(k) {
+    if (Math.abs(k - nightK) < 0.002) return;
+    nightK = k;
+    const l = TH.light;
+    hemi.color.setHex(l.sky).lerp(NIGHT.sky, k); hemi.groundColor.setHex(l.ground).multiplyScalar(1 - 0.6 * k);
+    hemi.intensity = l.hemi * (1 - 0.3 * k);
+    sun.color.setHex(l.sun).lerp(NIGHT.sun, k); sun.intensity = l.sunI * (1 - 0.5 * k);
+    fillLight.color.setHex(l.fill); fillLight.intensity = l.fillI * (1 + 0.5 * k);
+    scene.fog.color.setHex(TH.sky.fog).lerp(NIGHT.fog, k);
+    renderer.setClearColor(0x04060d, 0.5 * k);   // darkens the CSS sky behind the island
   }
   function buildMap() {
     if (mapGroup) { scene.remove(mapGroup); disposeTree(mapGroup); }
@@ -1086,6 +1097,34 @@ const Render3D = (() => {
       o.material.opacity = f < 0.6 ? 0.9 : 0.9 * (1 - (f - 0.6) / 0.4);
     });
 
+  // Tank wrecks: a scorched hull with flickering flames and rising smoke, fading after ~3s
+  const wrecks = new Pool(6,
+    () => {
+      const g = new THREE.Group();
+      const hullMat = new THREE.MeshPhongMaterial({ color: '#2b2724', flatShading: true, transparent: true, shininess: 5 });
+      const hull = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.13, 0.4), hullMat);
+      hull.position.y = 0.07; hull.rotation.z = 0.08;
+      const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.17, 0.1, 8), hullMat);
+      turret.position.set(0.12, 0.17, 0.05); turret.rotation.z = 0.5;      // knocked askew
+      hull.castShadow = turret.castShadow = true;
+      g.add(hull, turret);
+      const flames = [0, 1].map(i => { const s = glowSprite('#ff7a2a', 0.5, 0); s.position.set(i ? 0.15 : -0.12, 0.25, i ? 0.08 : -0.06); g.add(s); return s; });
+      g.userData = { hullMat, flames };
+      return g;
+    },
+    (o, f, d, dt) => {
+      const { hullMat, flames } = o.userData;
+      d.t += dt;
+      hullMat.opacity = f < 0.7 ? 1 : 1 - (f - 0.7) / 0.3;
+      flames.forEach((s, i) => {
+        s.material.opacity = (1 - f) * (0.55 + 0.35 * Math.sin(d.t * 23 + i * 2));
+        s.scale.setScalar(0.6 + 0.2 * Math.sin(d.t * 17 + i));
+      });
+      // Embers rising from the fire
+      if (dt > 0 && Math.random() < dt * 22 * (1 - f)) sparks.emit(o.position.x + rand(-0.15, 0.15), 0.25, o.position.z + rand(-0.12, 0.12), rand(-0.2, 0.2), rand(0.5, 1.1), rand(-0.2, 0.2), pick(['#ffb347', '#ff7a2a', '#ffd27a']), rand(0.4, 0.7), -0.4);
+      if (dt > 0 && Math.random() < dt * 8 * (1 - f)) puff(o.position.x + rand(-0.15, 0.15), 0.35, o.position.z + rand(-0.15, 0.15), 0.14, 0.9, '#3a3532', 0.4, 0, 0, 0.8);
+    });
+
   function puff(x, y, z, s, life, hex = '#8b8b8b', a = 0.5, vx = 0, vz = 0, rise = 0.5) {
     smoke.emit(life, (o, d) => { o.position.set(x, y, z); o.material.color.set(hex); Object.assign(d, { s0: s, grow: s * 1.6, rise, a, vx, vz }); });
   }
@@ -1165,7 +1204,21 @@ const Render3D = (() => {
     for (let i = 0; i < (big ? 8 : 2); i++) puff(x + rand(-0.2, 0.2), y, z + rand(-0.2, 0.2), rand(0.3, 0.5) * k, rand(0.6, 1.1));
     ring(x, 0.2, z, big ? 3.2 : 0.9, big ? 0.8 : 0.35, d.spark);
     flash(x, y, z, big ? 3.2 : 1.0, big ? 0.35 : 0.2);
-    if (e.type === 'Healer') for (let i = 0; i < 10; i++) sparks.emit(x + rand(-0.3, 0.3), 0.4, z + rand(-0.3, 0.3), rand(-0.3, 0.3), rand(0.6, 1.2), rand(-0.3, 0.3), '#7dffb2', rand(0.8, 1.2), -0.5);
+    // Per-type extras on top of the shared burst
+    const fx = Math.cos(e.moveAngle), fz = Math.sin(e.moveAngle);   // direction of travel
+    if (e.type === 'Tank') {
+      wrecks.emit(3, (o, dd) => { o.position.set(x, 0, z); o.rotation.y = -e.moveAngle + rand(-0.4, 0.4); dd.t = 0; });
+    } else if (e.type === 'Healer') {           // burst of green light out to its aura's reach
+      flash(x, 0.5, z, 2.4, 0.4, '#7dffb2', 0.9);
+      ring(x, 0.15, z, 2.5, 0.6, '#4dffa0', 0.8);
+      for (let i = 0; i < 22; i++) sparks.emit(x + rand(-0.5, 0.5), rand(0.2, 0.6), z + rand(-0.5, 0.5), rand(-0.3, 0.3), rand(0.8, 1.6), rand(-0.3, 0.3), pick(['#7dffb2', '#d6ffe8']), rand(0.9, 1.4), -0.4);
+    } else if (e.type === 'Speeder') {          // spins out: wreckage thrown forward
+      for (let i = 0; i < 10; i++) debris.emit(x, 0.25, z, fx * rand(2, 3.5) + rand(-0.5, 0.5), rand(0.6, 1.6), fz * rand(2, 3.5) + rand(-0.5, 0.5), pick(d.cols), rand(0.04, 0.08), rand(0.9, 1.4));
+      for (let i = 0; i < 18; i++) sparks.emit(x, 0.2, z, fx * rand(2.5, 4.5) + rand(-0.6, 0.6), rand(0.2, 1.2), fz * rand(2.5, 4.5) + rand(-0.6, 0.6), pick(['#ffd27a', '#ffffff', '#f39c12']), rand(0.25, 0.45), 4);
+      for (let i = 1; i <= 3; i++) puff(x + fx * i * 0.25, 0.15, z + fz * i * 0.25, 0.16, 0.6, '#8a8a8a', 0.35, fx * 0.8, fz * 0.8, 0.2);
+    } else if (e.type === 'Soldier') {          // helmet flies off
+      debris.emit(x, 0.6, z, rand(-0.6, 0.6) - fx * 0.5, rand(3, 3.8), rand(-0.6, 0.6) - fz * 0.5, '#8e969e', 0.13, 1.6);
+    }
     if (big) {
       ring(x, 0.25, z, 5, 1.1, '#f1c40f', 0.6);
       for (let i = 0; i < 28; i++) { const a = i / 28 * TAU; sparks.emit(x, 0.5, z, Math.cos(a) * 4.5, 0.4, Math.sin(a) * 4.5, '#f1c40f', 0.9, 1); }
@@ -1180,6 +1233,27 @@ const Render3D = (() => {
     const x = toX(e.x), z = toZ(e.y);
     for (let i = 0; i < 14; i++) sparks.emit(x + rand(-0.2, 0.2), rand(0.2, 0.8), z + rand(-0.3, 0.3), rand(-0.8, 0.8), rand(0.2, 1.2), rand(-0.8, 0.8), '#b07cff', rand(0.4, 0.7), 1);
     ring(x, 0.05, z, 0.8, 0.45, '#a36bff', 0.7);
+    if (e.type === 'Boss') bossEntrance();
+  }
+  // Boss entrance: the portal surges, the ground rumbles and the camera closes in on the
+  // portal for ~1.6s, then returns. Any orbit / zoom / reset by the player cancels the move.
+  let bossCam = null, rumble = 0;
+  function bossEntrance() {
+    const p = portal.group.position;
+    flash(p.x, 0.8, p.z, 3.5, 0.5, '#b35cff');
+    ring(p.x, 0.1, p.z, 2.8, 0.8, '#a36bff', 0.9);
+    for (let i = 0; i < 40; i++) sparks.emit(p.x, rand(0.3, 1.4), p.z, rand(-2.5, 2.5), rand(0.5, 2.5), rand(-2.5, 2.5), pick(['#b07cff', '#e9b3ff', '#ffffff']), rand(0.5, 1.0), 2);
+    if (reduceMotion) return;
+    rumble = 0.7;
+    if (!bossCam) {
+      bossCam = { t: 1.6, tx: goal.tx, ty: goal.ty, tz: goal.tz, r: goal.r };
+      goal.tx += (p.x - goal.tx) * 0.45; goal.tz += (p.z - goal.tz) * 0.45; goal.r *= 0.72;
+    }
+  }
+  function endBossCam() {
+    if (!bossCam) return;
+    Object.assign(goal, { tx: bossCam.tx, ty: bossCam.ty, tz: bossCam.tz, r: bossCam.r });
+    bossCam = null;
   }
   function onExplosion(x2, y2) {
     const x = toX(x2), z = toZ(y2), g = groundAt(x, z);
@@ -1521,14 +1595,17 @@ const Render3D = (() => {
   const HOME = { tx: 0, ty: 0, tz: 0.6, r: 34.5, th: 0, ph: 0.8 };
   const cam = Object.assign({}, HOME), goal = Object.assign({}, HOME);
   function resetCamera() {
+    endBossCam();
     Object.assign(goal, HOME, { th: Math.round(cam.th / TAU) * TAU });
   }
   function orbit(dx, dy) {
+    endBossCam();
     goal.th -= dx * 0.006;
     goal.ph = Math.min(1.25, Math.max(0.1, goal.ph - dy * 0.005));
   }
   // factor < 1 moves the camera closer (pinch passes the ratio of finger spreads)
   function zoomBy(factor) {
+    endBossCam();
     goal.r = Math.min(40, Math.max(9, goal.r * factor));
   }
   function zoom(deltaY) { zoomBy(Math.exp(deltaY * 0.0012)); }
@@ -1541,6 +1618,13 @@ const Render3D = (() => {
     camera.lookAt(cam.tx, cam.ty, cam.tz);
     // Screen shake (state.shake is in game pixels)
     if (state.shake && (state.shake.x || state.shake.y)) camera.translateX(state.shake.x / T * 0.5).translateY(state.shake.y / T * 0.5);
+    // Boss entrance: ease back after the close-up, rumble meanwhile
+    if (bossCam && (bossCam.t -= rawDt) <= 0) endBossCam();
+    if (rumble > 0) {
+      rumble = Math.max(0, rumble - rawDt);
+      const a = 0.06 * rumble;
+      camera.translateX(rand(-a, a)).translateY(rand(-a, a));
+    }
   }
 
   // ─── Picking and projection ────────────────────────────────────────────────
@@ -1616,12 +1700,15 @@ const Render3D = (() => {
       lastPhase = state.phase;
     }
     updateCamera(rawDt, state);
+    // Day/night cycle on the menu turntable (one cycle a minute, starting at day); games are always day
+    if (state.phase === 'menu') { menuClock += rawDt; applyLight(0.5 - 0.5 * Math.cos(menuClock * TAU / 60)); }
+    else { menuClock = 0; applyLight(0); }
     syncTowers(state, dt, time);
     syncEnemies(state, dt, time);
     syncProjectiles(state, dt);
     updatePreview(state);
     updateBeams(dt, time);   // tip.getWorldPosition updates its own ancestors; render() updates the rest
-    sparks.update(dt); debris.update(dt); smoke.update(dt); flashes.update(dt); rings.update(dt); decals.update(dt); burns.update(dt);
+    sparks.update(dt); debris.update(dt); smoke.update(dt); flashes.update(dt); rings.update(dt); decals.update(dt); burns.update(dt); wrecks.update(dt);
     ambient.update(time);
     applyFade(portal); applyFade(gate);
     portal.glow.material.opacity = (0.45 + 0.15 * Math.sin(time * 3)) * portal.fade;

@@ -4,6 +4,9 @@ const TOWER_BTN_H  = 38;
 const STATS_Y      = 10;
 const TOWER_BTNS_Y = 128;  // after extended stats block + gap
 const TOWER_INFO_Y = TOWER_BTNS_Y + Object.keys(TOWER_DEFS).length * TOWER_BTN_H + 8; // 402
+// Selected-tower panel, offsets from TOWER_INFO_Y. Drawing (drawTowerInfo) and clicks
+// (handleTowerActionClick in game.js) both use these. The hint gets a fixed 4-line slot.
+const TOWER_INFO = { h: 276, hintY: 83, hintLines: 4, hintLineH: 11, prioY: 145, prioRowH: 26, upY: 199, sellY: 234 };
 const CONTROLS_Y   = CANVAS_H - 142;    // more room for ? button
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -138,15 +141,19 @@ function drawTowerButtons(ctx, x, startY, state) {
     ctx.font = '11px Arial';
     ctx.fillText(`${def.cost}g`, x + 40, y + 30);
 
-    ctx.fillStyle = '#5a6a7a'; ctx.font = '9px Arial';
-    ctx.fillText(`Dmg:${def.damage} Rng:${def.range} ${def.fireRate > 0 ? def.fireRate + '/s' : 'beam'}`, x + 14, y + 40);
+    // Stats, right-aligned inside the button on the same two rows as name and cost
+    ctx.fillStyle = ok ? '#7f8fa0' : '#4a5562'; ctx.font = '10px Arial'; ctx.textAlign = 'right';
+    ctx.fillText(`${def.damage} dmg · ${def.range} rng`, x + UI_WIDTH - 14, y + 17);
+    ctx.fillText(def.fireRate > 0 ? `${def.fireRate}/s` : 'beam', x + UI_WIDTH - 14, y + 30);
+    ctx.textAlign = 'left';
   });
 }
 
 // ─── Tower info panel ─────────────────────────────────────────────────────────
 function drawTowerInfo(ctx, x, y, state) {
   const t = state.selectedTower;
-  btn(ctx, x + 8, y, UI_WIDTH - 16, 236, '#1e2a45', '#2d3d60');
+  const L = TOWER_INFO;
+  btn(ctx, x + 8, y, UI_WIDTH - 16, L.h, '#1e2a45', '#2d3d60');
   ctx.textAlign = 'left';
 
   ctx.fillStyle = t.color; ctx.font = 'bold 13px Arial';
@@ -164,24 +171,22 @@ function drawTowerInfo(ctx, x, y, state) {
   ctx.fillStyle = '#5a7a5a'; ctx.font = '10px Arial';
   ctx.fillText(`\u2694 ${fmtDmg(t.totalDamage)} dmg dealt  \u2022  ${t.killCount} kills`, x + 14, y + 71);
 
-  // Hint
+  // Hint, wrapped to the panel's measured width, in its fixed slot (at most hintLines lines)
   const hint = TOWER_DEFS[t.type].hint;
   if (hint) {
     ctx.fillStyle = '#4a7a9b'; ctx.font = 'italic 9px Arial';
-    const words = hint.split(' ');
-    let line = '', lineY = y + 83;
-    for (const w of words) {
+    const maxW = UI_WIDTH - 28, lines = [];
+    let line = '';
+    for (const w of hint.split(' ')) {
       const test = line ? line + ' ' + w : w;
-      if (test.length > 26 && line) {
-        ctx.fillText(line, x + 14, lineY);
-        line = w; lineY += 11;
-      } else { line = test; }
+      if (line && ctx.measureText(test).width > maxW) { lines.push(line); line = w; } else line = test;
     }
-    if (line) ctx.fillText(line, x + 14, lineY);
+    if (line) lines.push(line);
+    lines.slice(0, L.hintLines).forEach((ln, i) => ctx.fillText(ln, x + 14, y + L.hintY + i * L.hintLineH));
   }
 
   ctx.fillStyle = '#7f8c8d'; ctx.font = 'bold 10px Arial';
-  ctx.fillText('PRIORITY', x + 14, y + 99);
+  ctx.fillText('PRIORITY', x + 14, y + L.prioY - 6);
 
   const priorities = [
     { key: 'first',     label: 'First'    },
@@ -191,7 +196,7 @@ function drawTowerInfo(ctx, x, y, state) {
   ];
   priorities.forEach(({ key, label }, i) => {
     const bx     = x + 10 + (i % 2) * 89;
-    const by     = y + 105 + Math.floor(i / 2) * 26;
+    const by     = y + L.prioY + Math.floor(i / 2) * L.prioRowH;
     const active = t.priority === key;
     btn(ctx, bx, by, 84, 22, active ? '#2980b9' : '#2d3d60', active ? '#3498db' : null, 3);
     ctx.fillStyle = '#fff'; ctx.font = '10px Arial'; ctx.textAlign = 'center';
@@ -203,24 +208,24 @@ function drawTowerInfo(ctx, x, y, state) {
   if (t.level < 3) {
     const cost = t.upgradeCost;
     const ok   = state.gold >= cost;
-    btn(ctx, x + 10, y + 159, UI_WIDTH - 20, 28, ok ? '#1e8449' : '#2d3d40', null, 4);
+    btn(ctx, x + 10, y + L.upY, UI_WIDTH - 20, 28, ok ? '#1e8449' : '#2d3d40', null, 4);
     ctx.fillStyle = ok ? '#fff' : '#666';
     ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
-    ctx.fillText(`Upgrade Lv.${t.level + 1}  (${cost}g)`, x + UI_WIDTH / 2, y + 178);
+    ctx.fillText(`Upgrade Lv.${t.level + 1}  (${cost}g)`, x + UI_WIDTH / 2, y + L.upY + 19);
     ctx.textAlign = 'left';
   } else {
     ctx.fillStyle = '#f1c40f'; ctx.font = 'bold 11px Arial';
-    ctx.fillText('\u2605 MAX LEVEL', x + 14, y + 174);
+    ctx.fillText('\u2605 MAX LEVEL', x + 14, y + L.upY + 15);
   }
 
   // Sell — shows confirm state
   const confirming = state.sellConfirm && state.sellConfirmTimer > 0;
-  btn(ctx, x + 10, y + 194, UI_WIDTH - 20, 28,
+  btn(ctx, x + 10, y + L.sellY, UI_WIDTH - 20, 28,
     confirming ? '#e74c3c' : '#922b21', confirming ? '#ff6b6b' : null, 4);
   ctx.fillStyle = '#fff'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
   ctx.fillText(
     confirming ? `Confirm? (${Math.ceil(state.sellConfirmTimer)}s)` : `Sell  (+${t.sellValue}g)`,
-    x + UI_WIDTH / 2, y + 213
+    x + UI_WIDTH / 2, y + L.sellY + 19
   );
   ctx.textAlign = 'left';
 }
