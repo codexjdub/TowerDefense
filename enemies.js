@@ -6,7 +6,7 @@ const ENEMY_DEFS = {
   Soldier: { hp: 200,  speed: 80,  reward: 20,  color: '#c0392b', radius: Math.round(14 * _ES), special: null,      label: 'So' },
   Tank:    { hp: 600,  speed: 50,  reward: 50,  color: '#7f8c8d', radius: Math.round(18 * _ES), special: 'armored', label: 'T'  },
   Speeder: { hp: 120,  speed: 200, reward: 15,  color: '#f39c12', radius: Math.round(10 * _ES), special: null,      label: 'Sp' },
-  Healer:  { hp: 300,  speed: 70,  reward: 35,  color: '#2ecc71', radius: Math.round(14 * _ES), special: 'healer',  label: 'H'  },
+  Healer:  { hp: 300,  speed: 70,  reward: 35,  color: '#2ecc71', radius: Math.round(14 * _ES), special: 'healer',  label: 'H', healRadius: 2.5 },   // healRadius in tiles
   Boss:    { hp: 3000, speed: 40,  reward: 200, color: '#8e44ad', radius: Math.round(22 * _ES), special: null,      label: 'B'  },
 };
 
@@ -67,7 +67,7 @@ class Enemy {
         if (e === this || !e.alive) continue;
         const dx = e.x - this.x;
         const dy = e.y - this.y;
-        if (Math.sqrt(dx * dx + dy * dy) < TILE_SIZE * 2.5) {
+        if (Math.sqrt(dx * dx + dy * dy) < TILE_SIZE * ENEMY_DEFS.Healer.healRadius) {
           e.hp = Math.min(e.maxHp, e.hp + 10 * dt);
         }
       }

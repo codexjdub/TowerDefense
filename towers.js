@@ -59,6 +59,7 @@ class Projectile {
     this.sourceTower = sourceTower;
     this.alive  = true;
     this.size   = aoe > 0 ? 7 * _TS : 4 * _TS;
+    this.hit    = false;   // set when it reaches its target (read by render3d for impact effects)
   }
 
   update(dt, enemies, floatingTexts) {
@@ -93,6 +94,7 @@ class Projectile {
         floatingTexts.push(new FloatingText(this.target.x, this.target.y, Math.round(dmg), '#fff'));
         if (this.slow > 0) this.target.applySlow(this.slow, 1.5);
       }
+      this.hit   = true;
       this.alive = false;
     } else {
       this.x += (dx / dist) * move;
@@ -133,6 +135,7 @@ class Tower {
     this.angle      = 0;          // barrel/aim direction (radians)
     this.flashTimer = 0;          // firing flash countdown
     this.recoilAnim = 0;          // barrel recoil timer (seconds)
+    this.shots      = 0;          // shots fired so far (render3d plays muzzle effects when it goes up)
     this.spinAngle  = 0;          // for Rapid spin / Freeze crystal rotation
     this.placementAnim = 0.38;  // bounce-in timer (seconds)
   }
@@ -244,6 +247,7 @@ class Tower {
       this.chainTimer  = 0.18;
       this.cooldown    = 1 / this.fireRate;
       this.flashTimer  = 0.08;
+      this.shots++;
       return;
     }
 
@@ -261,6 +265,7 @@ class Tower {
     this.cooldown   = 1 / this.fireRate;
     this.flashTimer = 0.08;
     this.recoilAnim = 0.12;
+    this.shots++;
   }
 
   upgrade() {

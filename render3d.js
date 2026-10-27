@@ -209,6 +209,7 @@ const Render3D = (() => {
         const x = cx + R(-9, 9) * u, y = cy + R(-7, 7) * u;
         if (onRoad(x, y)) continue;
         ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, 2.1 * u, 0, TAU); ctx.fill();
+        if (!t.flowerCentre) continue;   // off for themes whose 'flowers' are fallen leaves
         ctx.fillStyle = col === '#f6d04d' ? '#b86e12' : '#f3c33a'; ctx.beginPath(); ctx.arc(x, y, 0.8 * u, 0, TAU); ctx.fill();
       }
     }
@@ -727,7 +728,7 @@ const Render3D = (() => {
     for (let i = 0; i < lv; i++) {
       root.add(mesh(G('gem', () => new THREE.OctahedronGeometry(0.038)), phong(gold ? '#ffd84a' : lv === 2 ? '#e6ebf0' : '#d9a066', { emissive: '#332200', shininess: 100 }), (i - (lv - 1) / 2) * 0.1, 0.12, 0.47));
     }
-    const v = { t, root, level: lv, yaw: null, recoil: null, tip: new THREE.Object3D(), recoilDist: 0, yawAngle: -t.angle, extras: [] };
+    const v = { t, root, level: lv, yaw: null, recoil: null, tip: new THREE.Object3D(), recoilDist: 0, yawAngle: -t.angle, extras: [], shots: t.shots };
     const head = new THREE.Group(); head.position.y = 0.22; root.add(head);
     BUILD[t.type](head, v, lv);
     v.flash = glowSprite('#ffd08a', 0.5, 0); v.flash.material.map = STAR; v.tip.add(v.flash);
@@ -832,8 +833,9 @@ const Render3D = (() => {
         cross.add(mesh(G('crossH', () => new THREE.BoxGeometry(0.5, 0.15, 0.15)), gm));
         cross.add(mesh(G('crossV', () => new THREE.BoxGeometry(0.15, 0.5, 0.15)), gm));
         const cg = glowSprite('#7dffb2', 0.9, 0.35); cg.position.y = 0.55; body.add(cg);
-        const aura = new THREE.Mesh(G('auraRing', () => new THREE.RingGeometry(2.38, 2.5, 64).rotateX(-Math.PI / 2)), new THREE.MeshBasicMaterial({ color: '#4dffa0', transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending, depthWrite: false }));
-        const disc = new THREE.Mesh(G('auraDisc', () => new THREE.CircleGeometry(2.5, 48).rotateX(-Math.PI / 2)), new THREE.MeshBasicMaterial({ color: '#2ecc71', transparent: true, opacity: 0.05, blending: THREE.AdditiveBlending, depthWrite: false }));
+        const hr = ENEMY_DEFS.Healer.healRadius;   // the aura shows the healing reach
+        const aura = new THREE.Mesh(G('auraRing', () => new THREE.RingGeometry(hr - 0.12, hr, 64).rotateX(-Math.PI / 2)), new THREE.MeshBasicMaterial({ color: '#4dffa0', transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending, depthWrite: false }));
+        const disc = new THREE.Mesh(G('auraDisc', () => new THREE.CircleGeometry(hr, 48).rotateX(-Math.PI / 2)), new THREE.MeshBasicMaterial({ color: '#2ecc71', transparent: true, opacity: 0.05, blending: THREE.AdditiveBlending, depthWrite: false }));
         aura.position.y = disc.position.y = 0.2;
         group.add(aura, disc);
         Object.assign(v.parts, { cross, aura, disc });
@@ -947,10 +949,11 @@ const Render3D = (() => {
     for (let i = fadingTrails.length - 1; i >= 0; i--) {
       const ft = fadingTrails[i];
       ft.life -= dt;
-      if (ft.life <= 0) { scene.remove(ft.r.mesh); ft.r.geo.dispose(); ft.r.mat.dispose(); fadingTrails.splice(i, 1); }
+      if (ft.life <= 0) { dropRibbon(ft.r); fadingTrails.splice(i, 1); }
       else ft.r.mat.opacity = ft.r.baseOpacity * (ft.life / 0.2);
     }
   }
+  function dropRibbon(r) { scene.remove(r.mesh); r.geo.dispose(); r.mat.dispose(); }
   // A bullet landing on its target (Basic, Rapid, Sniper)
   const HIT_COL = { Basic: ['#9fd8ff', '#ffffff'], Rapid: ['#ff8fc0', '#ffd1e6'], Sniper: ['#fff4d0', '#ffffff'] };
   function bulletHit(p, pos) {
@@ -994,6 +997,11 @@ const Render3D = (() => {
       _col.set(hex); this.base[j] = _col.r; this.base[j + 1] = _col.g; this.base[j + 2] = _col.b;
       this.life[k] = this.maxLife[k] = life; this.grav[k] = grav;
     }
+    clear() {
+      this.life.fill(0); this.col.fill(0);
+      for (let k = 0; k < this.max; k++) this.pos[k * 3 + 1] = -99;
+      this.geo.attributes.position.needsUpdate = true; this.geo.attributes.color.needsUpdate = true;
+    }
     update(dt) {
       if (dt === 0) return;
       const drag = Math.exp(-1.6 * dt);
@@ -1032,6 +1040,11 @@ const Render3D = (() => {
       Object.assign(this.p[k], { x, y, z, vx, vy, vz, size, life, rx: Math.random() * 3, ry: Math.random() * 3, rz: 0, wx: rand(-8, 8), wy: rand(-8, 8), wz: rand(-8, 8) });
       if (this.mesh.setColorAt) { this.mesh.setColorAt(k, _col.set(hex)); this.mesh.instanceColor.needsUpdate = true; }
     }
+    clear() {
+      _dummy.scale.set(0, 0, 0); _dummy.updateMatrix();
+      for (let k = 0; k < this.max; k++) { this.p[k].life = 0; this.mesh.setMatrixAt(k, _dummy.matrix); }
+      this.mesh.instanceMatrix.needsUpdate = true;
+    }
     update(dt) {
       if (dt === 0) return;
       for (let k = 0; k < this.max; k++) {
@@ -1060,6 +1073,7 @@ const Render3D = (() => {
       const it = this.items[this.i]; this.i = (this.i + 1) % this.items.length;
       it.life = it.max = life; it.o.visible = true; init(it.o, it.d);
     }
+    clear() { for (const it of this.items) { it.life = 0; it.o.visible = false; } }
     update(dt) {
       if (dt === 0) return;
       for (const it of this.items) {
@@ -1210,7 +1224,7 @@ const Render3D = (() => {
       wrecks.emit(3, (o, dd) => { o.position.set(x, 0, z); o.rotation.y = -e.moveAngle + rand(-0.4, 0.4); dd.t = 0; });
     } else if (e.type === 'Healer') {           // burst of green light out to its aura's reach
       flash(x, 0.5, z, 2.4, 0.4, '#7dffb2', 0.9);
-      ring(x, 0.15, z, 2.5, 0.6, '#4dffa0', 0.8);
+      ring(x, 0.15, z, ENEMY_DEFS.Healer.healRadius, 0.6, '#4dffa0', 0.8);
       for (let i = 0; i < 22; i++) sparks.emit(x + rand(-0.5, 0.5), rand(0.2, 0.6), z + rand(-0.5, 0.5), rand(-0.3, 0.3), rand(0.8, 1.6), rand(-0.3, 0.3), pick(['#7dffb2', '#d6ffe8']), rand(0.9, 1.4), -0.4);
     } else if (e.type === 'Speeder') {          // spins out: wreckage thrown forward
       for (let i = 0; i < 10; i++) debris.emit(x, 0.25, z, fx * rand(2, 3.5) + rand(-0.5, 0.5), rand(0.6, 1.6), fz * rand(2, 3.5) + rand(-0.5, 0.5), pick(d.cols), rand(0.04, 0.08), rand(0.9, 1.4));
@@ -1374,10 +1388,8 @@ const Render3D = (() => {
       if (v.yaw) { v.yawAngle = lerpAngle(v.yawAngle, -t.angle, kYaw); v.yaw.rotation.y = v.yawAngle; }
       if (v.recoil) v.recoil.position.x = -(t.recoilAnim / 0.12) * v.recoilDist;
       const f = Math.max(0, t.flashTimer / 0.08);
-      // flashTimer jumps back up whenever the tower fires
-      const fired = t.flashTimer > (v.prevFlash || 0) + 0.01;
-      v.prevFlash = t.flashTimer;
-      if (fired) onFire(t, v, state);
+      // t.shots counts the tower's shots (a rebuilt view starts from the current count)
+      if (t.shots !== v.shots) { v.shots = t.shots; onFire(t, v, state); }
       if (t.type === 'Freeze') {
         v.spin.rotation.y = t.spinAngle; v.spin.position.y = 0.64 + Math.sin(time * 2) * 0.04;
         v.spin.scale.setScalar(1 + 0.3 * f);                     // crystal pulses on each shot
@@ -1451,7 +1463,8 @@ const Render3D = (() => {
       if (v.zap > 0) {
         v.zap -= dt;
         if (dt > 0) v.body.position.set(rand(-0.03, 0.03), v.body.position.y, rand(-0.03, 0.03));
-        zf = Math.random() < 0.5 ? 0.7 : 0.25;
+        if (dt > 0) v.zf = Math.random() < 0.5 ? 0.7 : 0.25;   // re-rolled only while running, so pause holds it
+        zf = v.zf || 0;
         if (dt > 0 && Math.random() < 0.6) sparks.emit(x + rand(-0.2, 0.2), rand(0.15, 0.7), z + rand(-0.2, 0.2), rand(-0.6, 0.6), rand(-0.3, 0.6), rand(-0.6, 0.6), pick(['#7ffff9', '#ffffff']), rand(0.08, 0.15), 0);
         if (v.zap <= 0) { v.body.position.x = 0; v.body.position.z = 0; }
       }
@@ -1490,10 +1503,9 @@ const Render3D = (() => {
   function syncProjectiles(state, dt) {
     const alive = new Set(state.projectiles);
     for (const [p, v] of projViews) if (!alive.has(p)) {
-      // Did it reach its target, or just stop because the target died first?
-      const hit = Math.hypot(p.x - p.target.x, p.y - p.target.y) < 24;
+      // p.hit: it reached its target, rather than stopping because the target died first
       if (p.source === 'Freeze') shatter(v.g.position);
-      else if (HIT_COL[p.source] && hit) bulletHit(p, v.g.position);
+      else if (HIT_COL[p.source] && p.hit) bulletHit(p, v.g.position);
       if (v.trail) fadingTrails.push({ r: v.trail, life: 0.2 });
       scene.remove(v.g); disposeTree(v.g); projViews.delete(p);
     }
@@ -1691,7 +1703,19 @@ const Render3D = (() => {
 
   // ─── Frame ─────────────────────────────────────────────────────────────────
   let time = 0, lastPhase = null;
+  // A new game state (new game, quit to menu, loaded save): drop the old game's effects,
+  // and its projectiles without impact effects, so nothing carries over onto the next map
+  let lastState = null;
+  function clearEffects() {
+    for (const fx of [sparks, debris, smoke, flashes, rings, decals, burns, wrecks]) fx.clear();
+    for (const ft of fadingTrails) dropRibbon(ft.r);
+    fadingTrails.length = 0;
+    for (const v of projViews.values()) { if (v.trail) dropRibbon(v.trail); scene.remove(v.g); disposeTree(v.g); }
+    projViews.clear();
+    endBossCam(); rumble = 0;
+  }
   function render(state, rawDt) {
+    if (state !== lastState) { if (lastState) clearEffects(); lastState = state; }
     if (PATH_WAYPOINTS_TILES !== builtFor) buildMap();
     const dt = state.paused ? 0 : rawDt * (state.speed || 1);
     time += dt;

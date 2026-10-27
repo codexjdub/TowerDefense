@@ -203,7 +203,8 @@ scenery, portal, castle, menu thumbnail) is derived from the waypoints.
 density and conifer share), the sky gradient and fog, light colours, the ambient particle
 mode (`firefly` / `leaf` / `dust` / `snow` / `ember`) and the menu thumbnail colours.
 Themes other than meadow are written as overrides of `MEADOW` via `withMeadow()`, so a new
-theme only lists what differs. A `road.glow` colour adds glowing cracks (emissive map).
+theme only lists what differs. A `road.glow` colour adds glowing cracks (emissive map). `grass.flowerCentre: false`
+(autumn) drops the flowers' yellow centres, for themes whose 'flowers' are fallen leaves.
 render3d.js reads the theme in `applyTheme()` when a map is built (`TH`); `mapTheme(i)`
 returns it. Rules for new maps:
 - Waypoints are tile coords (`col` 0–19, `row` 0–13); consecutive waypoints must share a
@@ -257,24 +258,33 @@ effects here rather than in game logic. Effect pools: `sparks` (Points), `debris
 (InstancedMesh), `smoke` / `flashes` / `rings` / `decals` (sprite pools), and `ambient`
 (the theme's fireflies, leaves, dust, snow or embers).
 
-**Shot and hit effects** need no game hooks. `syncTowers` spots a shot when a tower's
-`flashTimer` jumps back up and calls `onFire(t, v, state)`. That gives:
+**Shot and hit effects** need no game hooks; they read two facts the game records.
+Each tower counts its shots in `t.shots` (Tesla and projectile towers; Laser has its beam).
+`syncTowers` calls `onFire(t, v, state)` when the count goes up. A view rebuilt on
+upgrade starts from the current count, so it can't replay a shot. That gives:
 - a star muzzle flash (`STAR`) with random rotation;
 - Cannon and Sniper muzzle smoke;
 - Basic and Rapid brass casings;
 - the Freeze frost ring;
 - Tesla `zap` on the enemies the bolt reached (jitter, flicker, sparks).
 
-When a projectile's view is removed, `syncProjectiles` checks whether it was within 24px of
-its target (a hit, not a fizzle) and calls `bulletHit()` for Basic, Rapid and Sniper.
+A projectile sets `p.hit` when it reaches its target, rather than stopping because the
+target died first. When its view is removed, `syncProjectiles` calls `bulletHit()` for hits
+by Basic, Rapid and Sniper.
 `shatter()` always runs for Freeze. Sniper rounds draw a tracer `Ribbon` from the muzzle,
 which fades over 0.2s (`fadingTrails`). `onExplosion` adds a rolling dust ring (smoke puffs
 take `vx`/`vz`), dirt that lies for about 2s, and a longer scorch. It sets `hop` on enemy
 views in the blast. Laser beams leave `burns` that cool from orange to scorch.
 
+**New game state:** when `render()` gets a different `state` object (new game, quit to
+menu, loaded save), `clearEffects()` empties every effect pool and the Sniper tracers, and
+ends the Boss close-up. It removes the old projectiles without impact effects, so nothing
+carries over onto the next map. A new pool needs a `clear()` and a place in that list.
+
 **Deaths:** a shared burst plus per-type extras in `onDeath`:
 - Tank: a burning wreck from the `wrecks` pool, about 3s;
-- Healer: a green flash and a ring out to its 2.5-tile aura;
+- Healer: a green flash and a ring out to its aura (`ENEMY_DEFS.Healer.healRadius`, in tiles,
+  shared with the healing code and the aura model);
 - Speeder: wreckage thrown forward along `moveAngle`;
 - Soldier: its helmet flies off.
 

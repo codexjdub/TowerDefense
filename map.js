@@ -156,7 +156,7 @@ const MAP_CONFIGS = [
 const MEADOW = {
   grass: { base: '#4b8537', light: '122,178,76', dark: '42,96,40', blades: 3600,
            bladeCols: ['rgba(34,82,30,0.55)', 'rgba(126,184,86,0.45)', 'rgba(64,122,50,0.7)', 'rgba(150,200,100,0.3)'],
-           tuft: 'rgba(30,72,28,0.8)', tufts: 230, flowers: ['#f4efe1', '#f6d04d', '#e98bb0', '#b8a4f2'], flowerCount: 110,
+           tuft: 'rgba(30,72,28,0.8)', tufts: 230, flowers: ['#f4efe1', '#f6d04d', '#e98bb0', '#b8a4f2'], flowerCount: 110, flowerCentre: true,
            edge: 'rgba(34,58,22,0.4)' },
   road:  { base: '#b48e58', light: '222,192,132', dark: '134,100,58', specks: ['rgba(106,78,40,0.55)', 'rgba(236,216,168,0.5)'],
            pebble: ['#d8cdb8', '#7d705c'], rut: '#5a4020', chevron: 'rgba(90,62,28,0.2)', glow: null },
@@ -180,7 +180,7 @@ const THEMES = {
   autumn: withMeadow({
     grass: { base: '#8a8a3c', light: '196,170,90', dark: '110,96,40',
              bladeCols: ['rgba(120,100,40,0.55)', 'rgba(200,170,90,0.45)', 'rgba(150,130,60,0.6)', 'rgba(220,190,110,0.3)'],
-             tuft: 'rgba(100,80,30,0.7)', flowers: ['#d9542b', '#e8a23a', '#b8342a', '#c0702a'], flowerCount: 160, // fallen leaves
+             tuft: 'rgba(100,80,30,0.7)', flowers: ['#d9542b', '#e8a23a', '#b8342a', '#c0702a'], flowerCount: 160, flowerCentre: false, // fallen leaves
              edge: 'rgba(70,50,20,0.35)' },
     road:  { base: '#a9845a' },
     side:  { lip: '#7a7a35', lipHi: '#a09a48' },
