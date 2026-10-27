@@ -93,6 +93,25 @@ const Render3D = (() => {
   const DOT = radialTex([[0, 'rgba(255,255,255,1)'], [0.45, 'rgba(255,255,255,0.85)'], [1, 'rgba(255,255,255,0)']], 64);
   const SOFT = radialTex([[0, 'rgba(255,255,255,0.85)'], [0.55, 'rgba(255,255,255,0.35)'], [1, 'rgba(255,255,255,0)']]);
   const SCORCH = radialTex([[0, 'rgba(20,12,6,0.85)'], [0.55, 'rgba(30,20,10,0.5)'], [1, 'rgba(30,20,10,0)']]);
+  // Muzzle flash: a bright core with four long spikes and four short ones
+  const STAR = (() => {
+    const s = 128, c = makeCanvas(s, s), g = c.getContext('2d');
+    g.translate(s / 2, s / 2);
+    const core = g.createRadialGradient(0, 0, 0, 0, 0, s * 0.22);
+    core.addColorStop(0, 'rgba(255,255,255,1)'); core.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = core; g.fillRect(-s / 2, -s / 2, s, s);
+    for (let i = 0; i < 8; i++) {
+      const len = s * (i % 2 ? 0.26 : 0.48), w = s * (i % 2 ? 0.035 : 0.05);
+      g.save(); g.rotate(i / 8 * TAU);
+      const sp = g.createLinearGradient(0, 0, len, 0);
+      sp.addColorStop(0, 'rgba(255,255,255,0.95)'); sp.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = sp; g.beginPath(); g.moveTo(0, -w); g.lineTo(len, 0); g.lineTo(0, w); g.closePath(); g.fill();
+      g.restore();
+    }
+    const t = new THREE.CanvasTexture(c);
+    SHARED.add(t);
+    return t;
+  })();
   // Frost patch under slowed enemies: an icy disc with six-fold crystal spikes
   const FROST = (() => {
     const s = 128, c = makeCanvas(s, s), g = c.getContext('2d'), rng = mulberry32(77);
@@ -700,7 +719,7 @@ const Render3D = (() => {
     const v = { t, root, level: lv, yaw: null, recoil: null, tip: new THREE.Object3D(), recoilDist: 0, yawAngle: -t.angle, extras: [] };
     const head = new THREE.Group(); head.position.y = 0.22; root.add(head);
     BUILD[t.type](head, v, lv);
-    v.flash = glowSprite('#ffd08a', 0.5, 0); v.tip.add(v.flash);
+    v.flash = glowSprite('#ffd08a', 0.5, 0); v.flash.material.map = STAR; v.tip.add(v.flash);
     return v;
   }
 
@@ -904,8 +923,32 @@ const Render3D = (() => {
     let h0 = 0.8;
     if (tv) { tv.tip.getWorldPosition(_tmp); h0 = _tmp.y; }
     const v = { g, core, sx: p.x, sy: p.y, h0, lx: p.x, ly: p.y, smokeT: 0 };
+    if (p.source === 'Sniper') {           // tracer streak from the muzzle to the round
+      v.trail = new Ribbon(2, '#fff4d0', 0.045, 0.6);
+      v.start = tv ? _tmp.clone() : new THREE.Vector3(toX(p.x), h0, toZ(p.y));
+    }
     scene.add(g); projViews.set(p, v);
     return v;
+  }
+  // Sniper streaks fading out after their round lands
+  const fadingTrails = [];
+  function fadeTrails(dt) {
+    for (let i = fadingTrails.length - 1; i >= 0; i--) {
+      const ft = fadingTrails[i];
+      ft.life -= dt;
+      if (ft.life <= 0) { scene.remove(ft.r.mesh); ft.r.geo.dispose(); ft.r.mat.dispose(); fadingTrails.splice(i, 1); }
+      else ft.r.mat.opacity = ft.r.baseOpacity * (ft.life / 0.2);
+    }
+  }
+  // A bullet landing on its target (Basic, Rapid, Sniper)
+  const HIT_COL = { Basic: ['#9fd8ff', '#ffffff'], Rapid: ['#ff8fc0', '#ffd1e6'], Sniper: ['#fff4d0', '#ffffff'] };
+  function bulletHit(p, pos) {
+    const { x, y, z } = pos, cols = HIT_COL[p.source], sn = p.source === 'Sniper';
+    flash(x, y, z, sn ? 0.9 : 0.4, sn ? 0.14 : 0.1, cols[0], sn ? 1 : 0.8);
+    for (let i = 0; i < (sn ? 14 : p.source === 'Rapid' ? 3 : 6); i++) {
+      const sp = sn ? 3 : 1.6;
+      sparks.emit(x, y, z, rand(-sp, sp), rand(-0.2, sp * 0.7), rand(-sp, sp), pick(cols), rand(0.15, 0.3), 3);
+    }
   }
   // A Freeze shot breaking: on its target, or in mid-air if the target died first
   function shatter(pos) {
@@ -1020,7 +1063,11 @@ const Render3D = (() => {
   const debris = new Debris(420);
   const smoke = new Pool(70,
     () => new THREE.Sprite(new THREE.SpriteMaterial({ map: SOFT, color: '#8b8b8b', transparent: true, depthWrite: false, opacity: 0 })),
-    (o, f, d, dt) => { o.position.y += d.rise * dt; o.scale.setScalar(d.s0 + d.grow * f); o.material.opacity = d.a * (1 - f); });
+    (o, f, d, dt) => {
+      o.position.x += d.vx * dt; o.position.y += d.rise * dt; o.position.z += d.vz * dt;
+      d.vx *= 1 - 2.5 * dt; d.vz *= 1 - 2.5 * dt;   // rolling dust slows down
+      o.scale.setScalar(d.s0 + d.grow * f); o.material.opacity = d.a * (1 - f);
+    });
   const flashes = new Pool(24,
     () => new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending })),
     (o, f, d) => { o.scale.setScalar(d.s * (0.6 + 0.6 * f)); o.material.opacity = d.a * (1 - f) * (1 - f); });
@@ -1030,9 +1077,17 @@ const Render3D = (() => {
   const decals = new Pool(20,
     () => new THREE.Mesh(new THREE.CircleGeometry(0.45, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: SCORCH, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 })),
     (o, f) => { o.material.opacity = 1 - f * f; });
+  // Laser burn marks: start glowing orange, cool to a dark scorch, then fade
+  const _hot = new THREE.Color('#ffa040'), _cold = new THREE.Color('#2a1a10');
+  const burns = new Pool(48,
+    () => new THREE.Mesh(new THREE.CircleGeometry(0.14, 16).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: SOFT, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3 })),
+    (o, f) => {
+      o.material.color.copy(_hot).lerp(_cold, Math.min(1, f * 4));
+      o.material.opacity = f < 0.6 ? 0.9 : 0.9 * (1 - (f - 0.6) / 0.4);
+    });
 
-  function puff(x, y, z, s, life, hex = '#8b8b8b', a = 0.5) {
-    smoke.emit(life, (o, d) => { o.position.set(x, y, z); o.material.color.set(hex); Object.assign(d, { s0: s, grow: s * 1.6, rise: 0.5, a }); });
+  function puff(x, y, z, s, life, hex = '#8b8b8b', a = 0.5, vx = 0, vz = 0, rise = 0.5) {
+    smoke.emit(life, (o, d) => { o.position.set(x, y, z); o.material.color.set(hex); Object.assign(d, { s0: s, grow: s * 1.6, rise, a, vx, vz }); });
   }
   function flash(x, y, z, s, life, hex = '#ffd9a0', a = 1) {
     flashes.emit(life, (o, d) => { o.position.set(x, y, z); o.material.color.set(hex); Object.assign(d, { s, a }); });
@@ -1131,9 +1186,20 @@ const Render3D = (() => {
     flash(x, 0.35, z, 2.0, 0.22, '#ffcf8a');
     ring(x, 0.2, z, 1.1, 0.4, '#ffcf8a', 0.9);
     for (let i = 0; i < 22; i++) sparks.emit(x, 0.3, z, rand(-2.8, 2.8), rand(1, 4), rand(-2.8, 2.8), pick(['#ffb347', '#ffd27a', '#ff7b3a', '#ffffff']), rand(0.3, 0.6), 7);
-    for (let i = 0; i < 6; i++) debris.emit(x, 0.15, z, rand(-1.4, 1.4), rand(1.5, 3), rand(-1.4, 1.4), pick(['#6b4a2b', '#8a6a3c', '#4a3520']), rand(0.04, 0.08), rand(0.7, 1.1));
+    // Dirt clumps that land and lie about for ~2s before shrinking away
+    for (let i = 0; i < 14; i++) debris.emit(x, 0.15, z, rand(-1.6, 1.6), rand(1.5, 3.2), rand(-1.6, 1.6), pick(['#6b4a2b', '#8a6a3c', '#4a3520']), rand(0.04, 0.09), rand(1.8, 2.5));
     for (let i = 0; i < 3; i++) puff(x + rand(-0.2, 0.2), 0.3, z + rand(-0.2, 0.2), rand(0.35, 0.55), rand(0.8, 1.2), '#6f6f6f', 0.55);
-    decals.emit(5, (o) => { o.position.set(x, g + 0.006, z); o.rotation.y = Math.random() * TAU; o.material.opacity = 1; });
+    // Ring of dust rolling outward along the ground
+    for (let i = 0; i < 10; i++) {
+      const a = i / 10 * TAU + rand(-0.2, 0.2), sp = rand(1.4, 2.0);
+      puff(x + Math.cos(a) * 0.25, Math.max(0, g) + 0.12, z + Math.sin(a) * 0.25, rand(0.22, 0.32), rand(0.7, 1.0), '#a08a64', 0.45, Math.cos(a) * sp, Math.sin(a) * sp, 0.12);
+    }
+    decals.emit(9, (o) => { o.position.set(x, g + 0.006, z); o.rotation.y = Math.random() * TAU; o.material.opacity = 1; });
+    // Enemies caught in the blast hop
+    const reach = TOWER_DEFS.Cannon.aoe * 1.1;
+    for (const v of enemyViews.values()) {
+      if (Math.hypot(v.group.position.x - x, v.group.position.z - z) <= reach) v.hop = 1;
+    }
   }
   function onPlace(t) {
     const x = toX(t.x), z = toZ(t.y);
@@ -1234,18 +1300,15 @@ const Render3D = (() => {
       if (v.yaw) { v.yawAngle = lerpAngle(v.yawAngle, -t.angle, kYaw); v.yaw.rotation.y = v.yawAngle; }
       if (v.recoil) v.recoil.position.x = -(t.recoilAnim / 0.12) * v.recoilDist;
       const f = Math.max(0, t.flashTimer / 0.08);
+      // flashTimer jumps back up whenever the tower fires
+      const fired = t.flashTimer > (v.prevFlash || 0) + 0.01;
+      v.prevFlash = t.flashTimer;
+      if (fired) onFire(t, v, state);
       if (t.type === 'Freeze') {
         v.spin.rotation.y = t.spinAngle; v.spin.position.y = 0.64 + Math.sin(time * 2) * 0.04;
         v.spin.scale.setScalar(1 + 0.3 * f);                     // crystal pulses on each shot
         v.orbit.rotation.y = -t.spinAngle * 1.5;
         v.glow.material.opacity = 0.45 + 0.4 * f;
-        // flashTimer jumps back up when the tower fires: send a frost ring out from the crystal
-        if (t.flashTimer > (v.prevFlash || 0) + 0.01) {
-          v.tip.getWorldPosition(_tmp);
-          ring(_tmp.x, _tmp.y, _tmp.z, 0.75, 0.35, '#bfe8ff', 0.8);
-          for (let i = 0; i < 6; i++) sparks.emit(_tmp.x, _tmp.y, _tmp.z, rand(-0.8, 0.8), rand(-0.2, 0.6), rand(-0.8, 0.8), '#e6f8ff', rand(0.3, 0.5), 0.5);
-        }
-        v.prevFlash = t.flashTimer;
       } else if (t.type === 'Rapid') {
         v.spin.rotation.x = t.spinAngle * 2.5;
       } else if (t.type === 'Laser') {
@@ -1260,7 +1323,33 @@ const Render3D = (() => {
       }
       const barrel = t.type !== 'Freeze' && t.type !== 'Tesla' && t.type !== 'Laser';
       v.flash.material.opacity = barrel ? f : 0;
-      v.flash.scale.setScalar((t.type === 'Cannon' ? 0.9 : 0.5) * (0.6 + 0.6 * f));
+      v.flash.scale.setScalar(({ Cannon: 0.9, Sniper: 0.85 }[t.type] || 0.55) * (0.6 + 0.6 * f));
+    }
+  }
+  // One shot from tower t (detected from its flashTimer), for effects at the muzzle
+  function onFire(t, v, state) {
+    v.tip.getWorldPosition(_tmp);
+    const { x, y, z } = _tmp, dx = Math.cos(t.angle), dz = Math.sin(t.angle);
+    v.flash.material.rotation = rand(0, TAU);                    // each star flash looks different
+    if (t.type === 'Freeze') {
+      ring(x, y, z, 0.75, 0.35, '#bfe8ff', 0.8);
+      for (let i = 0; i < 6; i++) sparks.emit(x, y, z, rand(-0.8, 0.8), rand(-0.2, 0.6), rand(-0.8, 0.8), '#e6f8ff', rand(0.3, 0.5), 0.5);
+    } else if (t.type === 'Cannon' || t.type === 'Sniper') {
+      // Muzzle smoke drifting forward
+      const big = t.type === 'Cannon';
+      puff(x + dx * 0.1, y, z + dz * 0.1, big ? 0.22 : 0.13, big ? 0.9 : 0.6, '#bdbdbd', big ? 0.45 : 0.35, dx * 0.6, dz * 0.6, 0.3);
+    } else if (t.type === 'Basic' || t.type === 'Rapid') {
+      // Brass casing popped out of the turret's side, behind the muzzle
+      const side = Math.random() < 0.5 ? 1 : -1, back = t.type === 'Rapid' ? 0.4 : 0.35;
+      debris.emit(x - dx * back, y, z - dz * back, -dz * side * rand(0.8, 1.3) - dx * 0.3, rand(1.2, 1.8), dx * side * rand(0.8, 1.3) - dz * 0.3,
+        pick(['#d4a64a', '#e8c06a']), rand(0.022, 0.03), rand(0.7, 1.0));
+    } else if (t.type === 'Tesla') {
+      // Every enemy the bolt reached jitters with static for a moment
+      for (const p of t.chainPoints.slice(1)) {
+        for (const e of state.enemies) {
+          if (Math.abs(e.x - p.x) < 14 && Math.abs(e.y - p.y) < 14) { const ev = enemyViews.get(e); if (ev) ev.zap = 0.3; }
+        }
+      }
     }
   }
   function syncEnemies(state, dt, time) {
@@ -1278,11 +1367,25 @@ const Render3D = (() => {
       const adt = dt * (e.slowFactor || 1);
       v.animT += adt;
       ANIM[e.type](v, v.animT, adt);
+      // Hop from a Cannon blast (onExplosion sets hop = 1)
+      if (v.hop > 0) {
+        v.hop = Math.max(0, v.hop - dt * 4);
+        v.body.position.y += Math.sin(Math.PI * (1 - v.hop)) * 0.18;
+      }
+      // Static from a Tesla hit (onFire sets zap): jitter, plus flicker and sparks below
+      let zf = 0;
+      if (v.zap > 0) {
+        v.zap -= dt;
+        if (dt > 0) v.body.position.set(rand(-0.03, 0.03), v.body.position.y, rand(-0.03, 0.03));
+        zf = Math.random() < 0.5 ? 0.7 : 0.25;
+        if (dt > 0 && Math.random() < 0.6) sparks.emit(x + rand(-0.2, 0.2), rand(0.15, 0.7), z + rand(-0.2, 0.2), rand(-0.6, 0.6), rand(-0.3, 0.6), rand(-0.6, 0.6), pick(['#7ffff9', '#ffffff']), rand(0.08, 0.15), 0);
+        if (v.zap <= 0) { v.body.position.x = 0; v.body.position.z = 0; }
+      }
       if (v.parts.modRing && e.waveMod === 'Haste') v.parts.modRing.material.opacity = 0.45 + 0.4 * Math.sin(time * 10);
       const h = hitState.get(e), f = h ? h.flash / 0.09 : 0, slowed = e.slowTimer > 0;
       for (const m of v.mats) {
         const b = m.userData.baseEm;
-        m.emissive.setRGB(b.r + (slowed ? 0.12 : 0) + f, b.g + (slowed ? 0.26 : 0) + f, b.b + (slowed ? 0.45 : 0) + f);
+        m.emissive.setRGB(b.r + (slowed ? 0.12 : 0) + f + zf * 0.6, b.g + (slowed ? 0.26 : 0) + f + zf * 0.85, b.b + (slowed ? 0.45 : 0) + f + zf);
       }
       // Frost patch: forms quickly when the slow starts, melts over the slow's last 0.4s
       const frostGoal = slowed ? Math.min(1, e.slowTimer / 0.4) : 0;
@@ -1313,9 +1416,14 @@ const Render3D = (() => {
   function syncProjectiles(state, dt) {
     const alive = new Set(state.projectiles);
     for (const [p, v] of projViews) if (!alive.has(p)) {
+      // Did it reach its target, or just stop because the target died first?
+      const hit = Math.hypot(p.x - p.target.x, p.y - p.target.y) < 24;
       if (p.source === 'Freeze') shatter(v.g.position);
+      else if (HIT_COL[p.source] && hit) bulletHit(p, v.g.position);
+      if (v.trail) fadingTrails.push({ r: v.trail, life: 0.2 });
       scene.remove(v.g); disposeTree(v.g); projViews.delete(p);
     }
+    fadeTrails(dt);
     for (const p of state.projectiles) {
       const v = projViews.get(p) || buildProjectile(p);
       const tx = p.target.alive ? p.target.x : p.x, ty = p.target.alive ? p.target.y : p.y;
@@ -1326,6 +1434,7 @@ const Render3D = (() => {
       if (p.x !== v.lx || p.y !== v.ly) v.g.rotation.y = -Math.atan2(p.y - v.ly, p.x - v.lx);
       v.lx = p.x; v.ly = p.y;
       if (p.source === 'Cannon' && dt > 0 && (v.smokeT -= dt) <= 0) { v.smokeT = 0.05; puff(v.g.position.x, y, v.g.position.z, 0.12, 0.5, '#9a9a9a', 0.35); }
+      if (v.trail) v.trail.set([v.start, v.g.position], camera.position);
       if (p.source === 'Freeze' && dt > 0) {
         v.core.rotation.x += dt * 14; v.core.rotation.z += dt * 9;   // tumbling shard
         if ((v.smokeT -= dt) <= 0) {                                  // frost-mist trail
@@ -1365,6 +1474,12 @@ const Render3D = (() => {
         if (live && Math.random() < 0.7) {
           const f = Math.random() * 0.9;
           sparks.emit(_A.x + (_B.x - _A.x) * f, _A.y + (_B.y - _A.y) * f, _A.z + (_B.z - _A.z) * f, rand(-0.5, 0.5), rand(0, 0.8), rand(-0.5, 0.5), '#d6d0ff', 0.3, 2);
+        }
+        // Burn marks on the ground under the beam's far part
+        if (live && (v.burnT = (v.burnT || 0) - dt) <= 0) {
+          v.burnT = 0.07;
+          const f = rand(0.35, 1), bx = _A.x + (_B.x - _A.x) * f, bz = _A.z + (_B.z - _A.z) * f, gy = groundAt(bx, bz);
+          if (gy > -1) burns.emit(4, (o) => { o.position.set(bx, gy + 0.008, bz); o.rotation.y = rand(0, TAU); o.scale.setScalar(rand(0.8, 1.4)); });
         }
       }
       if (t.type === 'Tesla') {
@@ -1506,7 +1621,7 @@ const Render3D = (() => {
     syncProjectiles(state, dt);
     updatePreview(state);
     updateBeams(dt, time);   // tip.getWorldPosition updates its own ancestors; render() updates the rest
-    sparks.update(dt); debris.update(dt); smoke.update(dt); flashes.update(dt); rings.update(dt); decals.update(dt);
+    sparks.update(dt); debris.update(dt); smoke.update(dt); flashes.update(dt); rings.update(dt); decals.update(dt); burns.update(dt);
     ambient.update(time);
     applyFade(portal); applyFade(gate);
     portal.glow.material.opacity = (0.45 + 0.15 * Math.sin(time * 3)) * portal.fade;
