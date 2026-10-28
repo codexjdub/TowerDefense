@@ -108,6 +108,7 @@ function saveGame() {
     lives:      state.lives,
     maxLives:   state.maxLives,
     waveIndex:  state.waveIndex,
+    endlessMode: state.endlessMode,
     towers:     state.towers.map(t => ({
       type: t.type, col: t.col, row: t.row,
       level: t.level, priority: t.priority, invested: t.invested,
@@ -148,6 +149,7 @@ function resumeGame() {
   state.lives       = save.lives;
   state.maxLives    = save.maxLives;
   state.waveIndex   = save.waveIndex;
+  if (save.endlessMode !== undefined) state.endlessMode = save.endlessMode;   // older saves follow the menu toggle
   for (const t of save.towers) {
     const tower    = new Tower(t.type, t.col, t.row);
     tower.level    = t.level;
@@ -409,6 +411,9 @@ function handleClick(mx, my, tile) {
     }
     if (mx >= halfW + 15 && mx <= halfW + 170 && my >= cy + 110 && my <= cy + 154) {
       goToMenu();
+    }
+    if (state.phase === 'victory' && mx >= halfW - 170 && mx <= halfW + 170 && my >= cy + 166 && my <= cy + 210) {
+      continueEndless();
     }
     return;
   }
@@ -826,38 +831,54 @@ function update(rawDt) {
         Audio.victory();
         triggerFlash();
         state.particles.push(...spawnVictoryParticles());
-      } else {
-        // Record life loss for this wave
-        state.waveLifeLoss.push(state._curWaveLifeLoss);
-        state._curWaveLifeLoss = 0;
-
-        // Wave income
-        const income = waveIncome(state.waveIndex - 1);
-        state.gold  += income;
-        Audio.income();
-
-        // Life regen (Beginner: +2, Normal: +1, Veteran: 0)
-        let regenText = '';
-        if (state.regenPerWave > 0) {
-          const regen = Math.min(state.regenPerWave, state.maxLives - state.lives);
-          if (regen > 0) {
-            state.lives += regen;
-            regenText    = `  +${regen}\u2665`;
-          }
-        }
-
-        state.phase       = 'countdown';
-        state.countdown   = 10;
-        saveGame(); // auto-save between waves
-        state.banner      = `Wave ${state.waveIndex} cleared!  +${income}g${regenText}`;
-        state.bannerTimer = 2.2;
-        Audio.waveComplete();
-      }
+      } else waveCleared();
     }
   }
 
   tickParticles(dt);
   tickFloatingTexts(dt);
+}
+
+// A wave is cleared (state.waveIndex already points at the next one): income, life regen,
+// countdown to the next wave, auto-save
+function waveCleared() {
+  // Record life loss for this wave
+  state.waveLifeLoss.push(state._curWaveLifeLoss);
+  state._curWaveLifeLoss = 0;
+
+  // Wave income
+  const income = waveIncome(state.waveIndex - 1);
+  state.gold  += income;
+  Audio.income();
+
+  // Life regen (Beginner: +2, Normal: +1, Veteran: 0)
+  let regenText = '';
+  if (state.regenPerWave > 0) {
+    const regen = Math.min(state.regenPerWave, state.maxLives - state.lives);
+    if (regen > 0) {
+      state.lives += regen;
+      regenText    = `  +${regen}\u2665`;
+    }
+  }
+
+  state.phase       = 'countdown';
+  state.countdown   = 10;
+  saveGame(); // auto-save between waves
+  state.banner      = `Wave ${state.waveIndex} cleared!  +${income}g${regenText}`;
+  state.bannerTimer = 2.2;
+  Audio.waveComplete();
+}
+
+// Victory screen → keep playing the same run in endless mode. Wave 20 is then cleared as
+// usual (the victory branch skipped it). The regular score was saved at victory; the
+// endless one is saved when this run ends.
+function continueEndless() {
+  state.endlessMode = true;
+  state.scoreSaved  = false;
+  state.particles   = [];
+  waveCleared();
+  state.banner      = `${state.banner}  \u2022  \u221E Endless mode`;
+  state.bannerTimer = 3;
 }
 
 function tickParticles(dt) {

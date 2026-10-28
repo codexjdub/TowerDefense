@@ -231,6 +231,10 @@ produces procedural waves in 5 rotating patterns (0=boss assault, 1=speeder swar
 2=tank wall, 3=soldier horde, 4=mixed).
 
 `waveIncome(waveIndex)` = `25 + waveIndex * 3` gold on wave clear (0-based index).
+`waveCleared()` (game.js) does the between-waves bookkeeping: income, life regen, countdown,
+auto-save and banner. The Victory screen's **Continue in Endless** button calls
+`continueEndless()`, which switches the run to endless mode and runs `waveCleared()` for
+wave 20, since the victory branch skips it.
 Early send bonus: `Math.floor(state.countdown * 5)` gold.
 
 ## 3D Renderer (render3d.js)
@@ -450,7 +454,8 @@ Methods: `shoot(type)`, `enemyDeath(isBoss)`, `lifeLost()`, `income()`, `upgrade
 
 `saveGame()` / `loadSave()` / `hasSave()` / `clearSave()` use `localStorage('td_save')`.
 Saves between waves (build/countdown phase only). Stores: mapIndex, difficulty, gold,
-lives, waveIndex, tower list (type/col/row/level/priority/invested).
+lives, waveIndex, endlessMode, tower list (type/col/row/level/priority/invested). Saves
+without endlessMode follow the menu toggle.
 
 Leaderboard: `saveScore()` / `getScores()` → `'td_lb'` (top 10, regular).
 `saveEndlessScore()` / `getEndlessScores()` → `'td_endless_lb'` (top 10, endless).

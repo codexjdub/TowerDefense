@@ -693,6 +693,13 @@ function drawVictory(ctx, state) {
   btn(ctx, (COLS * TILE_SIZE) / 2 + 15, cy + 110, 155, 44, '#4a1a6e', '#8e44ad', 6);
   ctx.fillStyle = '#fff';
   ctx.fillText('MENU', (COLS * TILE_SIZE) / 2 + 92, cy + 138);
+
+  // Keep this run going in endless mode (continueEndless in game.js)
+  btn(ctx, (COLS * TILE_SIZE) / 2 - 170, cy + 166, 340, 44, '#145a32', '#2ecc71', 6);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Arial';
+  ctx.fillText('\u221E  CONTINUE IN ENDLESS', (COLS * TILE_SIZE) / 2, cy + 187);
+  ctx.fillStyle = '#a9dfbf'; ctx.font = '10px Arial';
+  ctx.fillText('Same towers and gold \u2022 waves keep coming, tougher each time', (COLS * TILE_SIZE) / 2, cy + 202);
   ctx.textAlign = 'left';
 }
 
