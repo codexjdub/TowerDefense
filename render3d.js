@@ -11,7 +11,8 @@ const Render3D = (() => {
   const noop = () => {};
   const STUB = { ok: false, render: noop, resize: noop, drawOverlay: noop, pickTile: () => null, project: () => [0, 0, 0],
                  orbit: noop, zoom: noop, zoomBy: noop, resetCamera: noop, onSpawn: noop, onDeath: noop, onEscape: noop,
-                 onExplosion: noop, onPlace: noop, onUpgrade: noop, onSell: noop };
+                 onExplosion: noop, onPlace: noop, onUpgrade: noop, onSell: noop,
+                 towerIcon: () => null, toggleBloom: () => false };
   if (!window.THREE) return STUB;
 
   const T = TILE_SIZE, TAU = Math.PI * 2;
@@ -39,7 +40,7 @@ const Render3D = (() => {
   catch (err) { return STUB; }
   renderer.setClearColor(0x000000, 0);
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = THREE.PCFShadowMap;   // unlike PCFSoft, it honours shadow.radius (softer edges)
 
   const scene = new THREE.Scene();
   scene.fog = new THREE.Fog(0x121a2a, 40, 80);
@@ -54,10 +55,15 @@ const Render3D = (() => {
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.bias = -0.0004;
   sun.shadow.normalBias = 0.03;
+  sun.shadow.radius = 2.5;
   scene.add(sun, sun.target);
   const fillLight = new THREE.DirectionalLight(0x8fb0ff, 0.22);
   fillLight.position.set(10, 6, 12);
   scene.add(fillLight);
+  // Coloured light from the portal and the castle torches (always exactly these two, so
+  // adding or removing them never recompiles shaders). Placed when the map is built.
+  const portalLight = new THREE.PointLight(0xa36bff, 0, 6, 2), gateLight = new THREE.PointLight(0xff9a3c, 0, 4.5, 2);
+  scene.add(portalLight, gateLight);
 
   // Geometries, materials and textures reused across objects are never disposed
   const SHARED = new Set();
@@ -92,6 +98,16 @@ const Render3D = (() => {
   const GLOW = radialTex([[0, 'rgba(255,255,255,1)'], [0.22, 'rgba(255,255,255,0.55)'], [1, 'rgba(255,255,255,0)']]);
   const DOT = radialTex([[0, 'rgba(255,255,255,1)'], [0.45, 'rgba(255,255,255,0.85)'], [1, 'rgba(255,255,255,0)']], 64);
   const SOFT = radialTex([[0, 'rgba(255,255,255,0.85)'], [0.55, 'rgba(255,255,255,0.35)'], [1, 'rgba(255,255,255,0)']]);
+  // Tank tread links (each tank scrolls its own clone)
+  const TREAD = (() => {
+    const c = document.createElement('canvas'); c.width = 64; c.height = 16;
+    const x = c.getContext('2d');
+    x.fillStyle = '#2b2f33'; x.fillRect(0, 0, 64, 16);
+    x.fillStyle = '#4b5258'; for (let i = 0; i < 8; i++) x.fillRect(i * 8, 0, 3, 16);
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(2, 1); SHARED.add(t);
+    return t;
+  })();
   const SCORCH = radialTex([[0, 'rgba(20,12,6,0.85)'], [0.55, 'rgba(30,20,10,0.5)'], [1, 'rgba(30,20,10,0)']]);
   // Muzzle flash: a bright core with four long spikes and four short ones
   const STAR = (() => {
@@ -355,7 +371,7 @@ const Render3D = (() => {
   // ─── Map: ground, scenery, portal, gatehouse ───────────────────────────────
   let mapGroup = null, builtFor = null, grassMesh = null, roadMesh = null;
   const portal = { group: null, swirl: null, glow: null, mats: [], fade: 1 };
-  const gate = { group: null, flags: [], torches: [], mats: [], fade: 1 };
+  const gate = { group: null, flags: [], torches: [], mats: [], windows: [], fade: 1 };
 
   function buildGround(parent) {
     const top = { pos: [], nor: [], uv: [], idx: [] }, side = { pos: [], nor: [], uv: [], idx: [] };
@@ -479,6 +495,8 @@ const Render3D = (() => {
     }
     portal.group = g; portal.mats = fadeable(g);
     parent.add(g);
+    g.updateMatrixWorld(true);
+    portalLight.position.copy(g.localToWorld(new THREE.Vector3(0.5, 0.8, 0)));
   }
   function buildGate(parent) {
     const g = new THREE.Group(), e1 = WP[WP.length - 1];
@@ -500,12 +518,23 @@ const Render3D = (() => {
     for (let i = 0; i < 5; i++) g.add(mesh(G('gbar', () => new THREE.BoxGeometry(0.03, 0.26, 0.03)), phong('#3a3f46', { shininess: 60 }), -0.02, 0.66, -0.36 + i * 0.18));
     for (const s of [-1, 1]) {
       const torch = new THREE.Mesh(G('torch', () => new THREE.SphereGeometry(0.035, 6, 4)), new THREE.MeshBasicMaterial({ color: '#ffcf70' }));
+      torch.material.userData.glow = true;   // still glows once fadeable() makes it transparent
       torch.position.set(-0.12, 0.78, s * 0.4);
       const tg = glowSprite('#ff9a3c', 0.55, 0.7); tg.position.copy(torch.position);
       g.add(torch, tg); gate.torches.push(tg);
     }
+    // Windows on the towers' board-facing sides, lit at night (applyLight)
+    const win = new THREE.MeshPhongMaterial({ color: '#2a1d10', emissive: '#ffb347', emissiveIntensity: 0.1, flatShading: true });
+    win.userData.window = true;
+    for (const s of [-1, 1]) for (const y of [0.55, 0.95]) {
+      const w = new THREE.Mesh(G('gwin', () => new THREE.BoxGeometry(0.05, 0.14, 0.08)), win);
+      w.position.set(-0.185, y, s * 0.68); g.add(w);
+    }
     gate.group = g; gate.mats = fadeable(g);
+    gate.windows = gate.mats.filter(m => m.userData.window);
     parent.add(g);
+    g.updateMatrixWorld(true);
+    gateLight.position.copy(g.localToWorld(new THREE.Vector3(-0.35, 0.8, 0)));
   }
 
   // The portal and castle fade when they stand between the camera and the board (an exit
@@ -533,6 +562,9 @@ const Render3D = (() => {
   }
   function applyTheme() {
     TH = mapTheme(CURRENT_MAP_INDEX);
+    // Light pools add light, so on pale ground (sand, snow) they wash out to white: dim them there
+    const gc = new THREE.Color(TH.grass.base);
+    poolDim = 1 - 0.75 * (0.3 * gc.r + 0.59 * gc.g + 0.11 * gc.b);
     canvas3d.style.background = TH.sky.css;
     ambient.setTheme(TH.ambient);
     nightK = -1; applyLight(0);
@@ -551,6 +583,7 @@ const Render3D = (() => {
     fillLight.color.setHex(l.fill); fillLight.intensity = l.fillI * (1 + 0.5 * k);
     scene.fog.color.setHex(TH.sky.fog).lerp(NIGHT.fog, k);
     renderer.setClearColor(0x04060d, 0.5 * k);   // darkens the CSS sky behind the island
+    for (const m of gate.windows) m.emissiveIntensity = 0.1 + 0.9 * k;
   }
   function buildMap() {
     if (mapGroup) { scene.remove(mapGroup); disposeTree(mapGroup); }
@@ -577,7 +610,12 @@ const Render3D = (() => {
       const rec = new THREE.Group(); rec.position.y = 0.1; yaw.add(rec);
       rec.add(mesh(G('bBarrel', () => alongX(new THREE.CylinderGeometry(0.055, 0.055, 0.42, 10))), phong(metal, { shininess: 90, specular: 0x888888 }), 0.3, 0, 0));
       rec.add(mesh(G('bMuzzle', () => alongX(new THREE.CylinderGeometry(0.075, 0.075, 0.08, 10))), phong(lv === 3 ? '#a8821f' : '#3e454d'), 0.49, 0, 0));
-      v.tip.position.set(0.55, 0, 0); rec.add(v.tip);
+      if (lv >= 2) for (const s of [-1, 1]) {
+        const sh = mesh(G('bShield', () => new THREE.BoxGeometry(0.22, 0.15, 0.03)), phong('#2a6c9c', { shininess: 60 }), 0.1, 0.1, s * 0.2);
+        sh.rotation.y = s * 0.25; yaw.add(sh);
+      }
+      if (lv === 3) rec.add(mesh(G('bBrake', () => new THREE.BoxGeometry(0.07, 0.07, 0.14)), phong('#a8821f', { shininess: 80 }), 0.57, 0, 0));
+      v.tip.position.set(lv === 3 ? 0.62 : 0.55, 0, 0); rec.add(v.tip);
       Object.assign(v, { yaw, recoil: rec, recoilDist: 0.07 });
     },
     Sniper(head, v, lv) {
@@ -591,6 +629,10 @@ const Render3D = (() => {
       yaw.add(mesh(G('sScope' + scopeLen, () => alongX(new THREE.CylinderGeometry(0.045, 0.045, scopeLen, 10))), phong('#1f262e', { shininess: 80 }), 0.02, 0.12, 0));
       const lens = new THREE.Mesh(G('sLens', () => new THREE.SphereGeometry(0.035, 8, 6)), phong('#8fdcff', { emissive: '#3aa0d0' }));
       lens.position.set(0.02 + scopeLen / 2, 0.12, 0); yaw.add(lens);
+      if (lv === 3) {
+        yaw.add(mesh(G('sAnt', () => new THREE.CylinderGeometry(0.008, 0.008, 0.32, 4)), phong('#2a2f36'), -0.14, 0.24, 0.07));
+        yaw.add(new THREE.Mesh(G('sAntTip', () => new THREE.SphereGeometry(0.02, 6, 4)), phong('#ff6b5b', { emissive: '#ff3020' })).translateX(-0.14).translateY(0.41).translateZ(0.07));
+      }
       v.tip.position.set(0.96, 0, 0); rec.add(v.tip);
       Object.assign(v, { yaw, recoil: rec, recoilDist: 0.1 });
     },
@@ -598,6 +640,10 @@ const Render3D = (() => {
       const iron = lv === 3 ? '#8a6a1c' : '#3f4249', ring = lv === 3 ? '#b8912a' : '#55595f';
       head.add(mesh(G('cDrum', () => new THREE.CylinderGeometry(0.34, 0.38, 0.14, 12)), phong('#2d2f34'), 0, 0.07, 0));
       const yaw = new THREE.Group(); yaw.position.y = 0.14; head.add(yaw);
+      if (lv >= 2) for (let i = 0; i < 10; i++) {   // armour skirt, turning with the turret
+        const a = i / 10 * TAU, p = mesh(G('cSkirt', () => new THREE.BoxGeometry(0.03, 0.12, 0.2)), phong(lv === 3 ? '#8a6a1c' : '#4a4e55', { shininess: 50 }), Math.cos(a) * 0.32, 0.02, Math.sin(a) * 0.32);
+        p.rotation.y = -a; p.rotateZ(0.3); yaw.add(p);
+      }
       yaw.add(mesh(G('cDome', () => new THREE.SphereGeometry(0.29, 14, 8, 0, TAU, 0, Math.PI / 2)), phong(lv === 3 ? '#e08a2a' : '#c9661b', { shininess: 60 })));
       for (let i = 0; i < 8; i++) { const a = i / 8 * TAU; yaw.add(mesh(G('rivet', () => new THREE.SphereGeometry(0.025, 6, 4)), phong('#f6c38f'), Math.cos(a) * 0.268, 0.1, Math.sin(a) * 0.268)); }
       const pitch = new THREE.Group(); pitch.position.y = 0.14; pitch.rotation.z = 0.28; yaw.add(pitch);
@@ -676,6 +722,11 @@ const Render3D = (() => {
       v.glow = glowSprite('#40fff6', 1.1, 0.5); v.glow.position.y = 0.86; head.add(v.glow);
       v.tip.position.y = 0.86; head.add(v.tip);
       v.sphere = sphere;
+      if (lv === 3) {
+        const holder = new THREE.Group(); holder.position.y = 0.86; holder.rotation.x = 1.2; head.add(holder);
+        v.halo = new THREE.Mesh(G('tHalo', () => new THREE.TorusGeometry(0.27, 0.022, 5, 32, Math.PI * 1.6)), phong('#fff2b0', { emissive: '#f7d154', emissiveIntensity: 0.9 }));
+        holder.add(v.halo);
+      }
     },
   };
 
@@ -725,10 +776,27 @@ const Render3D = (() => {
       const trim = mesh(G('trim', () => new THREE.TorusGeometry(0.445, 0.028, 6, 30)), phong(gold ? '#f1c40f' : '#cfd5dc', { shininess: 90, specular: 0xffffff }), 0, 0.222, 0);
       trim.rotation.x = Math.PI / 2; root.add(trim);
     }
+    if (lv >= 2) {                     // stone collar: buttresses around the pedestal
+      for (let i = 0; i < 4; i++) {
+        const a = (i + 0.5) / 4 * TAU, b = mesh(G('buttress', () => new THREE.BoxGeometry(0.14, 0.27, 0.17)), phong('#5d626c', { shininess: 8 }), Math.cos(a) * 0.47, 0.135, Math.sin(a) * 0.47);
+        b.rotation.y = -a; root.add(b);
+      }
+    }
     for (let i = 0; i < lv; i++) {
       root.add(mesh(G('gem', () => new THREE.OctahedronGeometry(0.038)), phong(gold ? '#ffd84a' : lv === 2 ? '#e6ebf0' : '#d9a066', { emissive: '#332200', shininess: 100 }), (i - (lv - 1) / 2) * 0.1, 0.12, 0.47));
     }
     const v = { t, root, level: lv, yaw: null, recoil: null, tip: new THREE.Object3D(), recoilDist: 0, yawAngle: -t.angle, extras: [], shots: t.shots };
+    if (lv === 3) {                    // glowing core ring and floating rune stones
+      const col = TYPE_COL[t.type];
+      v.core = new THREE.MeshPhongMaterial({ color: col, emissive: col, emissiveIntensity: 1, flatShading: true });
+      const core = new THREE.Mesh(G('core', () => new THREE.TorusGeometry(0.4, 0.022, 6, 32)), v.core);
+      core.rotation.x = Math.PI / 2; core.position.y = 0.245; root.add(core);
+      v.runes = new THREE.Group(); v.runes.position.y = 0.5; root.add(v.runes);
+      for (let i = 0; i < 3; i++) {
+        const a = i / 3 * TAU, r = mesh(G('rune', () => new THREE.OctahedronGeometry(0.075, 0).scale(0.7, 1.5, 0.7)), phong('#e8ecf2', { emissive: col, emissiveIntensity: 0.7, shininess: 90 }), Math.cos(a) * 0.52, 0, Math.sin(a) * 0.52);
+        r.rotation.y = -a; v.runes.add(r);
+      }
+    }
     const head = new THREE.Group(); head.position.y = 0.22; root.add(head);
     BUILD[t.type](head, v, lv);
     v.flash = glowSprite('#ffd08a', 0.5, 0); v.flash.material.map = STAR; v.tip.add(v.flash);
@@ -736,10 +804,19 @@ const Render3D = (() => {
   }
 
   const towerViews = new Map();
+  // A soft pool of the tower's light on the grass (Tesla, Freeze, Laser): faint by day,
+  // strong at night, brighter as it fires
+  const POOL_COL = { Tesla: '#40fff6', Freeze: '#9fd8ff', Laser: '#b9b0ff' };
+  let poolDim = 1;   // set per theme in applyTheme
   function buildTower(t) {
     const v = buildTowerModel(t);
     v.root.position.set(toX(t.x), GRASS_Y, toZ(t.y));
     v.root.traverse(o => { o.userData.tower = t; });
+    if (POOL_COL[t.type]) {
+      v.pool = new THREE.Mesh(G('pool', () => new THREE.PlaneGeometry(2.6, 2.6).rotateX(-Math.PI / 2)),
+        new THREE.MeshBasicMaterial({ map: GLOW, color: POOL_COL[t.type], transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+      v.pool.position.y = 0.02; v.pool.userData.noPick = true; v.root.add(v.pool);
+    }
     if (t.type === 'Laser') {
       v.beam = [new Ribbon(2, '#8f86ff', 0.3, 0.1), new Ribbon(2, '#a29bfe', 0.11, 0.4), new Ribbon(2, '#ffffff', 0.035, 0.9)];
       v.extras.push(...v.beam.map(b => b.mesh));
@@ -790,7 +867,7 @@ const Render3D = (() => {
     switch (e.type) {
       case 'Scout': {
         const b = mesh(G('scoutBody', () => new THREE.IcosahedronGeometry(r, 1)), M('#e74c3c', { shininess: 60 }), 0, r * 0.95, 0);
-        b.scale.set(1.25, 0.95, 0.95); body.add(b);
+        b.scale.set(1.25, 0.95, 0.95); body.add(b); v.parts.blob = b;
         for (const s of [-1, 1]) {
           body.add(mesh(G('eye', () => new THREE.SphereGeometry(r * 0.22, 8, 6)), M('#ffffff', { emissive: '#444444' }), r * 0.95, r * 1.15, s * r * 0.38));
           body.add(mesh(G('pupil', () => new THREE.SphereGeometry(r * 0.11, 6, 4)), M('#111111'), r * 1.14, r * 1.15, s * r * 0.38));
@@ -807,14 +884,21 @@ const Render3D = (() => {
         body.add(mesh(G('rim', () => new THREE.BoxGeometry(0.05, r * 1.55, r * 1.35)), M('#c9ced3', { shininess: 80 }), r * 0.72, 0.2 + r * 0.6, 0));
         body.add(mesh(G('shield', () => new THREE.BoxGeometry(0.06, r * 1.4, r * 1.2)), M('#b03225'), r * 0.76, 0.2 + r * 0.6, 0));
         body.add(mesh(G('shieldBoss', () => new THREE.SphereGeometry(r * 0.2, 8, 6)), M('#c9ced3', { shininess: 90 }), r * 0.8, 0.2 + r * 0.6, 0));
+        // Arms swing opposite the legs (pivot at the shoulder)
+        v.parts.arms = [-1, 1].map(s => { const a = mesh(G('arm', () => new THREE.BoxGeometry(0.07, 0.2, 0.07).translate(0, -0.09, 0)), M('#a93226'), 0, 0.2 + r * 1.0, s * r * 0.72); body.add(a); return a; });
         v.barH = 1.0; break;
       }
       case 'Tank': {
         body.add(mesh(G('hull', () => new THREE.BoxGeometry(0.72, 0.18, 0.46)), M('#7f8c8d'), 0, 0.19, 0));
-        for (const s of [-1, 1]) body.add(mesh(G('tread', () => new THREE.BoxGeometry(0.8, 0.16, 0.13)), M('#2b2f33'), 0, 0.08, s * 0.28));
-        body.add(mesh(G('turret', () => new THREE.CylinderGeometry(0.17, 0.2, 0.13, 10)), M('#95a5a6', { shininess: 60 }), -0.04, 0.345, 0));
-        body.add(mesh(G('tBarrel', () => alongX(new THREE.CylinderGeometry(0.04, 0.04, 0.42, 8))), M('#4d555a'), 0.22, 0.35, 0));
-        body.add(mesh(G('tHatch', () => new THREE.CylinderGeometry(0.06, 0.06, 0.03, 8)), M('#5d676a'), -0.08, 0.42, 0.04));
+        // Treads: each tank scrolls its own copy of the link texture
+        const tex = TREAD.clone(); tex.needsUpdate = true; v.parts.tread = tex;
+        const tm = new THREE.MeshPhongMaterial({ map: tex, flatShading: true, shininess: 20 });   // not M(): its key would serialise the texture
+        tm.userData.baseEm = tm.emissive.clone(); mats.push(tm);
+        for (const s of [-1, 1]) body.add(mesh(G('tread', () => new THREE.BoxGeometry(0.8, 0.16, 0.13)), tm, 0, 0.08, s * 0.28));
+        const tur = new THREE.Group(); tur.position.x = -0.04; body.add(tur); v.parts.turret = tur;
+        tur.add(mesh(G('turret', () => new THREE.CylinderGeometry(0.17, 0.2, 0.13, 10)), M('#95a5a6', { shininess: 60 }), 0, 0.345, 0));
+        tur.add(mesh(G('tBarrel', () => alongX(new THREE.CylinderGeometry(0.04, 0.04, 0.42, 8))), M('#4d555a'), 0.26, 0.35, 0));
+        tur.add(mesh(G('tHatch', () => new THREE.CylinderGeometry(0.06, 0.06, 0.03, 8)), M('#5d676a'), -0.04, 0.42, 0.04));
         v.barH = 0.72; break;
       }
       case 'Speeder': {
@@ -842,6 +926,18 @@ const Render3D = (() => {
         v.barH = 1.05; break;
       }
       case 'Boss': {
+        body.scale.setScalar(1.2);
+        // Heavy feet (stomp in ANIM), shoulder plates, horns and glowing cracks
+        v.parts.feet = [-1, 1].map(s => { const f = mesh(G('bossFoot', () => new THREE.BoxGeometry(0.3, 0.12, 0.2)), M('#3a1650'), 0, 0.06, s * r * 0.55); body.add(f); return f; });
+        v.parts.stepped = [true, true];
+        for (const s of [-1, 1]) {
+          const pl = mesh(G('bossPauldron', () => new THREE.SphereGeometry(r * 0.42, 8, 5, 0, TAU, 0, Math.PI / 2)), M('#3b2a4a', { shininess: 90 }), 0, 0.55 + r * 0.35, s * r * 0.82);
+          pl.rotation.x = s * 0.7; body.add(pl);
+          const horn = mesh(G('bossHorn', () => new THREE.ConeGeometry(0.06, 0.34, 6).translate(0, 0.17, 0)), M('#e8dcc0', { shininess: 60 }), r * 0.25, 0.55 + r * 0.7, s * r * 0.42);
+          horn.rotation.set(s * 0.75, 0, -0.35); body.add(horn);
+        }
+        v.parts.cracks = new THREE.LineSegments(G('bossCracks', () => crackLines(r * 1.01)), new THREE.LineBasicMaterial({ color: '#ff5cf0' }));
+        v.parts.cracks.position.y = 0.55; body.add(v.parts.cracks);
         body.add(mesh(G('bossBody', () => new THREE.IcosahedronGeometry(r, 1)), M('#8e44ad', { shininess: 50 }), 0, 0.55, 0));
         const spikes = new THREE.Group(); spikes.position.y = 0.55; body.add(spikes);
         const sm = M('#4a1f63');
@@ -866,7 +962,7 @@ const Render3D = (() => {
         body.add(mesh(G('crownGem', () => new THREE.OctahedronGeometry(0.045)), M('#e74c3c', { emissive: '#551111', shininess: 120 }), r * 0.52, crownY, 0));
         v.parts.spikes = spikes;
         v.parts.glow = glowSprite('#b35cff', 2.4, 0.45); v.parts.glow.position.y = 0.55; body.add(v.parts.glow);
-        v.barH = 1.5; break;
+        v.barH = 1.75; break;
       }
     }
     if (e.waveMod && MOD_COL[e.waveMod]) {
@@ -879,18 +975,44 @@ const Render3D = (() => {
     return v;
   }
   function removeEnemy(v) { scene.remove(v.group); disposeTree(v.group); }
+  // Glowing cracks over the Boss: a random third of its facet edges
+  function crackLines(r) {
+    const edges = new THREE.EdgesGeometry(new THREE.IcosahedronGeometry(r, 1)), src = edges.attributes.position.array;
+    const rng = mulberry32(7), keep = [];
+    for (let i = 0; i < src.length; i += 6) if (rng() < 0.35) keep.push(...src.slice(i, i + 6));
+    edges.dispose();
+    return new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(keep, 3));
+  }
+  // A Boss foot landing: a dust puff and a slight tremor
+  function stomp(foot) {
+    foot.getWorldPosition(_tmp);
+    puff(_tmp.x, 0.1, _tmp.z, 0.16, 0.6, '#9a8f80', 0.35, 0, 0, 0.15);
+    if (!reduceMotion) rumble = Math.max(rumble, 0.2);
+  }
   const ANIM = {
     Scout(v, t) {
-      v.body.position.y = Math.abs(Math.sin(t * 16 + v.phase)) * 0.07;
+      const hop = Math.abs(Math.sin(t * 16 + v.phase));
+      v.body.position.y = hop * 0.07;
+      // Squash on landing, stretch in the air
+      const st = 1 + 0.16 * (hop - 0.35);
+      v.parts.blob.scale.set(1.25 / Math.sqrt(st), 0.95 * st, 0.95 / Math.sqrt(st));
       v.parts.feet.forEach((f, i) => { f.position.x = Math.sin(t * 16 + v.phase + i * Math.PI) * 0.06; });
     },
     Soldier(v, t) {
       v.body.position.y = Math.abs(Math.sin(t * 9 + v.phase)) * 0.03;
       v.parts.legs.forEach((l, i) => { l.rotation.z = Math.sin(t * 9 + v.phase + i * Math.PI) * 0.5; });
+      v.parts.arms.forEach((a, i) => { a.rotation.z = -Math.sin(t * 9 + v.phase + i * Math.PI) * 0.45; });
     },
-    Tank(v, t) { v.body.position.y = Math.sin(t * 40 + v.phase) * 0.004; },
-    Speeder(v, t) {
+    Tank(v, t, dt) {
+      v.body.position.y = Math.sin(t * 40 + v.phase) * 0.004;
+      v.parts.tread.offset.x -= dt * 1.6;                               // links roll at the tank's speed
+      v.parts.turret.rotation.y = Math.sin(t * 0.7 + v.phase) * 0.3;   // turret scans side to side
+    },
+    Speeder(v, t, dt) {
       v.body.position.y = 0.05 + Math.sin(t * 7 + v.phase) * 0.025;
+      // Bank into turns (v.turn: how far the heading still has to swing, set in syncEnemies)
+      const bank = -Math.max(-0.55, Math.min(0.55, v.turn * 0.9));
+      v.body.rotation.x += (bank - v.body.rotation.x) * Math.min(1, dt * 8);
       v.parts.engine.material.opacity = 0.6 + 0.3 * Math.sin(t * 40);
     },
     Healer(v, t, dt) {
@@ -901,7 +1023,18 @@ const Render3D = (() => {
       v.parts.disc.material.opacity = 0.035 + 0.03 * p;
     },
     Boss(v, t, dt) {
-      v.body.position.y = 0.05 + Math.sin(t * 1.5 + v.phase) * 0.05;
+      // Stomp: each foot lifts and swings forward in turn; the body dips as it lands
+      let low = 1;
+      v.parts.feet.forEach((f, i) => {
+        const p = t * 3.2 + v.phase + i * Math.PI, lift = Math.max(0, Math.sin(p));
+        f.position.x = Math.cos(p) * -0.13; f.position.y = 0.06 + lift * 0.14;
+        low = Math.min(low, lift);
+        const down = lift === 0;
+        if (down && !v.parts.stepped[i] && dt > 0) stomp(f);
+        v.parts.stepped[i] = down;
+      });
+      v.body.position.y = 0.02 + low * 0.05;
+      v.parts.cracks.material.color.setRGB(1, 0.36, 0.94).multiplyScalar(0.7 + 0.3 * Math.sin(t * 2.2));
       v.parts.spikes.rotation.y += dt * 0.5;
       v.parts.glow.material.opacity = 0.35 + 0.15 * Math.sin(t * 1.8);
     },
@@ -1407,6 +1540,13 @@ const Render3D = (() => {
         v.glow.scale.setScalar(1 + 0.8 * f);
         v.sphere.material.emissiveIntensity = 0.7 + 0.3 * pulse + f;
       }
+      if (v.core) {
+        v.core.emissiveIntensity = 0.75 + 0.35 * Math.sin(time * 2.4) + 0.5 * f;
+        v.runes.rotation.y = time * 0.6;
+        v.runes.children.forEach((r, i) => { r.position.y = Math.sin(time * 1.8 + i * 2.1) * 0.05; });
+      }
+      if (v.halo) v.halo.rotation.z = time * 1.5;
+      if (v.pool) v.pool.material.opacity = (0.4 + 0.35 * Math.max(0, nightK) + 0.3 * f + (t.beamActive ? 0.2 : 0)) * poolDim;
       const barrel = t.type !== 'Freeze' && t.type !== 'Tesla' && t.type !== 'Laser';
       v.flash.material.opacity = barrel ? f : 0;
       v.flash.scale.setScalar(({ Cannon: 0.9, Sniper: 0.85 }[t.type] || 0.55) * (0.6 + 0.6 * f));
@@ -1447,6 +1587,8 @@ const Render3D = (() => {
       const v = enemyViews.get(e) || buildEnemy(e);
       const x = toX(e.x - Math.sin(e.moveAngle) * e.wobble), z = toZ(e.y + Math.cos(e.moveAngle) * e.wobble);
       v.group.position.set(x, 0, z);
+      const turn = -e.moveAngle - v.yaw;
+      v.turn = Math.atan2(Math.sin(turn), Math.cos(turn));   // heading still to swing (Speeder banks on it)
       v.yaw = lerpAngle(v.yaw, -e.moveAngle, kYaw);
       v.group.rotation.y = v.yaw;
       // Walk / hover cycles run at the enemy's current speed, so slowed enemies visibly trudge
@@ -1649,9 +1791,9 @@ const Render3D = (() => {
     raycaster.setFromCamera(_ndc, camera);
     const targets = [grassMesh, roadMesh];
     for (const v of towerViews.values()) targets.push(v.root);
-    // Skip glow sprites: Three.js hits them even where they're transparent (or at opacity 0),
-    // which would make empty tiles next to a tower select the tower
-    const hit = raycaster.intersectObjects(targets, true).find(h => !h.object.isSprite);
+    // Skip glow sprites and light pools: Three.js hits them even where they're transparent (or
+    // at opacity 0), which would make empty tiles next to a tower select the tower
+    const hit = raycaster.intersectObjects(targets, true).find(h => !h.object.isSprite && !h.object.userData.noPick);
     if (!hit) return null;
     const t = hit.object.userData.tower;
     if (t) return { col: t.col, row: t.row };
@@ -1701,6 +1843,115 @@ const Render3D = (() => {
     ctx.restore();
   }
 
+  // ─── Bloom ─────────────────────────────────────────────────────────────────
+  // Only emitted light glows, so a bright snowfield doesn't: a half-size pass draws lit
+  // surfaces as their emissive colour alone, keeps additive glows (sprites, beams, sparks) and
+  // unlit solids as they are, and hides other see-through effects (smoke, decals, rings).
+  // UnrealBloomPass blurs that and the blur is added onto the normal frame (over the CSS sky
+  // too, as light). B toggles it, saved; without the vendored pass it's always off.
+  const bloom = (() => {
+    if (!THREE.UnrealBloomPass || !THREE.FullScreenQuad) return null;
+    const rt = new THREE.WebGLRenderTarget(1, 1, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat });
+    const pass = new THREE.UnrealBloomPass(new THREE.Vector2(1, 1), 1.25, 0.6, 0.1);
+    const quad = new THREE.FullScreenQuad(new THREE.ShaderMaterial({
+      uniforms: { tBloom: { value: pass.renderTargetsHorizontal[0].texture } },   // the pass's finished blur
+      vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: 'uniform sampler2D tBloom; varying vec2 vUv; void main() { gl_FragColor = vec4(texture2D(tBloom, vUv).rgb, 0.0); }',
+      // Add the colour, leave the canvas alpha alone (premultiplied, so it adds over the sky)
+      blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
+      blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor, depthTest: false, depthWrite: false,
+    }));
+    const standIns = new WeakMap();   // material → what it draws as in the glow pass (null: hidden)
+    function standIn(m) {
+      if (standIns.has(m)) return standIns.get(m);
+      let s = null;
+      if (m.emissive) {                // lit: its emissive colour only (black if it has none)
+        s = new THREE.MeshBasicMaterial({ map: m.emissiveMap, side: m.side, transparent: m.transparent, fog: false });
+        m.addEventListener('dispose', () => s.dispose());
+      } else if (m.blending === THREE.AdditiveBlending || m.userData.glow || !m.transparent) s = m;
+      standIns.set(m, s);
+      return s;
+    }
+    const swapped = [], hidden = [], _cc = new THREE.Color();
+    let on = true;
+    try { on = localStorage.getItem('td_bloom') !== 'off'; } catch (err) {}
+    return {
+      get on() { return on; },
+      toggle() {
+        on = !on;
+        try { localStorage.setItem('td_bloom', on ? 'on' : 'off'); } catch (err) {}
+        return on;
+      },
+      setSize(w, h) { rt.setSize(w, h); pass.setSize(w, h); },
+      // Before the normal render: the glow pass, blurred
+      prepare() {
+        scene.traverse(o => {
+          const m = o.material;
+          if (!m || !o.visible || Array.isArray(m)) return;
+          const s = standIn(m);
+          if (s === m) return;
+          if (!s) { o.visible = false; hidden.push(o); return; }
+          s.color.copy(m.emissive).multiplyScalar(m.emissiveIntensity); s.opacity = m.opacity;
+          o.material = s; swapped.push(o, m);
+        });
+        renderer.getClearColor(_cc); const ca = renderer.getClearAlpha();
+        renderer.setClearColor(0x000000, 1);
+        renderer.shadowMap.autoUpdate = false;
+        renderer.setRenderTarget(rt); renderer.render(scene, camera);
+        pass.render(renderer, null, rt, 0, false);
+        renderer.setRenderTarget(null);
+        renderer.shadowMap.autoUpdate = true;
+        renderer.setClearColor(_cc, ca);
+        for (let i = 0; i < swapped.length; i += 2) swapped[i].material = swapped[i + 1];
+        for (const o of hidden) o.visible = true;
+        swapped.length = hidden.length = 0;
+      },
+      // After it: add the blur on top
+      composite() { renderer.autoClear = false; quad.render(renderer); renderer.autoClear = true; },
+    };
+  })();
+  const toggleBloom = () => !!bloom && bloom.toggle();
+
+  // ─── Sidebar icons ─────────────────────────────────────────────────────────
+  // Each tower type's level-1 model, drawn once into a small canvas for the sidebar buttons,
+  // with a grey copy for when it's unaffordable. Rendered at 4× and scaled down for smooth edges.
+  const icons = {};
+  function towerIcon(type, grey) {
+    if (!icons[type]) icons[type] = paintIcon(type);
+    return icons[type][grey ? 1 : 0];
+  }
+  function paintIcon(type) {
+    const S = 256, out = 64;
+    const sc = new THREE.Scene();
+    sc.add(new THREE.HemisphereLight(0xdfeaff, 0x3a3f4a, 0.7));
+    const key = new THREE.DirectionalLight(0xfff2dc, 0.75); key.position.set(-2, 5, 3); sc.add(key);
+    const rim = new THREE.DirectionalLight(0x9fc0ff, 0.35); rim.position.set(3, 2, -3); sc.add(rim);
+    const v = buildTowerModel({ type, level: 1, angle: 0, shots: 0 });
+    if (v.yaw) v.yaw.rotation.y = -0.15;           // barrel to the right, a little toward the viewer
+    sc.add(v.root);
+    const cam = new THREE.PerspectiveCamera(29, 1, 0.1, 20);
+    cam.position.set(2.1, 2.0, 2.6); cam.lookAt(0.14, 0.5, -0.1);
+    const rt = new THREE.WebGLRenderTarget(S, S), buf = new Uint8Array(S * S * 4);
+    renderer.getClearColor(_iconCC); const ca = renderer.getClearAlpha();
+    renderer.setClearColor(0x000000, 0);
+    renderer.setRenderTarget(rt); renderer.render(sc, cam);
+    renderer.readRenderTargetPixels(rt, 0, 0, S, S, buf);
+    renderer.setRenderTarget(null); renderer.setClearColor(_iconCC, ca);
+    rt.dispose(); disposeTree(v.root);
+    // WebGL rows run bottom-up
+    const big = document.createElement('canvas'); big.width = big.height = S;
+    const img = big.getContext('2d').createImageData(S, S);
+    for (let y = 0; y < S; y++) img.data.set(buf.subarray((S - 1 - y) * S * 4, (S - y) * S * 4), y * S * 4);
+    big.getContext('2d').putImageData(img, 0, 0);
+    const shrink = (src, n) => { const c = document.createElement('canvas'); c.width = c.height = n; c.getContext('2d').drawImage(src, 0, 0, n, n); return c; };
+    const icon = shrink(shrink(big, S / 2), out);
+    const grey = shrink(icon, out), gx = grey.getContext('2d'), gi = gx.getImageData(0, 0, out, out), d = gi.data;
+    for (let i = 0; i < d.length; i += 4) { const l = (d[i] * 0.3 + d[i + 1] * 0.59 + d[i + 2] * 0.11) * 0.8; d[i] = d[i + 1] = d[i + 2] = l; d[i + 3] *= 0.55; }
+    gx.putImageData(gi, 0, 0);
+    return [icon, grey];
+  }
+  const _iconCC = new THREE.Color();
+
   // ─── Frame ─────────────────────────────────────────────────────────────────
   let time = 0, lastPhase = null;
   // A new game state (new game, quit to menu, loaded save): drop the old game's effects,
@@ -1735,8 +1986,11 @@ const Render3D = (() => {
     sparks.update(dt); debris.update(dt); smoke.update(dt); flashes.update(dt); rings.update(dt); decals.update(dt); burns.update(dt); wrecks.update(dt);
     ambient.update(time);
     applyFade(portal); applyFade(gate);
-    portal.glow.material.opacity = (0.45 + 0.15 * Math.sin(time * 3)) * portal.fade;
+    const night = Math.max(0, nightK), pp = Math.sin(time * 3), flick = 0.2 * Math.sin(time * 13) + 0.1 * Math.sin(time * 29);
+    portal.glow.material.opacity = (0.45 + 0.15 * pp) * (1 + 0.4 * night) * portal.fade;
     gate.torches.forEach((tg, i) => { tg.material.opacity = (0.55 + 0.2 * Math.sin(time * 13 + i * 2) + 0.1 * Math.sin(time * 29)) * gate.fade; });
+    portalLight.intensity = (2.2 + 0.4 * pp) * (1 + 0.8 * night);
+    gateLight.intensity = (1.6 + 2 * flick) * (1 + 1.2 * night);
     if (dt > 0) {
       portal.swirl.rotation.z -= dt * 1.8;
       if (Math.random() < 0.3) {
@@ -1745,7 +1999,10 @@ const Render3D = (() => {
       }
       gate.flags.forEach((fl, i) => { fl.rotation.y = Math.sin(time * 3 + i) * 0.35; });
     }
+    const glow = bloom && bloom.on;
+    if (glow) bloom.prepare();
     renderer.render(scene, camera);
+    if (glow) bloom.composite();
   }
   // Cap the drawing buffer so large HiDPI screens (e.g. 5K, ~10M px) don't make the GPU
   // shade far more pixels than it needs every frame
@@ -1753,11 +2010,12 @@ const Render3D = (() => {
   function resize(cssW, cssH, dpr) {
     renderer.setPixelRatio(Math.min(dpr, Math.sqrt(MAX_PIXELS / (cssW * cssH))));
     renderer.setSize(cssW, cssH, false);
+    if (bloom) { const b = renderer.getDrawingBufferSize(new THREE.Vector2()); bloom.setSize(Math.round(b.x / 2), Math.round(b.y / 2)); }
     camera.aspect = cssW / cssH; camera.updateProjectionMatrix();
   }
 
   return {
     ok: true, render, resize, drawOverlay, pickTile, project, orbit, zoom, zoomBy, resetCamera,
-    onSpawn, onDeath, onEscape, onExplosion, onPlace, onUpgrade, onSell,
+    onSpawn, onDeath, onEscape, onExplosion, onPlace, onUpgrade, onSell, towerIcon, toggleBloom,
   };
 })();

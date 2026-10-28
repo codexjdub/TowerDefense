@@ -209,6 +209,9 @@ document.addEventListener('keydown', e => {
     state.showFPS = !state.showFPS;
   }
 
+  // B — toggle bloom (saved)
+  if (e.key === 'b' || e.key === 'B') Render3D.toggleBloom();
+
   // C — reset the camera
   if (e.key === 'c' || e.key === 'C') Render3D.resetCamera();
 

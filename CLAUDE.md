@@ -96,8 +96,12 @@ CONTROLS_Y   = CANVAS_H - 142
 
 ```
 audio.js → particles.js → map.js → enemies.js → towers.js → waves.js
-  → vendor/three.min.js → render3d.js → ui.js → game.js
+  → vendor/three.min.js → vendor/CopyShader.js → vendor/LuminosityHighPassShader.js
+  → vendor/EffectComposer.js → vendor/UnrealBloomPass.js → render3d.js → ui.js → game.js
 ```
+
+The four vendor files after three.min.js are the r128 `examples/js` versions, for bloom.
+EffectComposer.js is only there for `THREE.Pass` / `THREE.FullScreenQuad`.
 
 Each file can reference globals defined in earlier files (functions in later files are
 fine to call at runtime, e.g. render3d.js uses `roundRect` from ui.js inside draw calls).
@@ -294,9 +298,55 @@ camera close-up on the portal (`bossCam`, restored by `endBossCam`). `orbit`, `z
 `prefers-reduced-motion`.
 
 **Day/night:** `applyLight(k)` darkens the theme's lights, fog and sky toward night (k 0→1,
-with a translucent clear colour over the CSS sky). The menu cycles k once a minute
-(`menuClock`); everywhere else k = 0. Note that `render()` treats `state.speed` 0 as 1, so
+with a translucent clear colour over the CSS sky), and lights the castle windows. The menu
+cycles k once a minute (`menuClock`); everywhere else k = 0. Note that `render()` treats `state.speed` 0 as 1, so
 use `state.paused` to freeze effects for a screenshot.
+
+**Bloom:** only emitted light glows. `bloom.prepare()` runs before the normal render:
+- It draws the scene into a half-size target, with every lit material swapped for a basic
+  material of its emissive colour (and `emissiveMap`).
+- Additive materials, opaque unlit ones and any with `userData.glow` are drawn as they are.
+- Other transparent sprites, points and meshes (smoke, decals, range rings) are hidden.
+- `UnrealBloomPass` then blurs that target.
+
+`bloom.composite()` adds the blur onto the canvas. It adds colour without touching alpha, so
+glows light up the CSS sky too. To make something glow, give it an emissive colour or an
+additive material. Its brightness then decides how much it blooms (threshold 0.1).
+
+`B` toggles bloom (`Render3D.toggleBloom()`). The setting is saved in `localStorage('td_bloom')`.
+Without the vendor files, bloom is simply off.
+
+**Lights:** two `PointLight`s, `portalLight` and `gateLight`, are placed when the map is
+built. Keep the light count fixed, since changing it recompiles every shader. Tesla, Freeze
+and Laser have an additive light pool on the grass (`v.pool`):
+- it brightens at night and when the tower fires;
+- it is dimmed on pale themes (`poolDim`, from `TH.grass.base`);
+- it is skipped by `pickTile` via `userData.noPick`.
+
+Shadows use `PCFShadowMap` with `shadow.radius`; PCFSoft ignores the radius.
+
+**Tower tiers** (`buildTowerModel`, shared by all types):
+- level 2 adds buttresses;
+- level 3 adds a pulsing emissive core ring (`v.core`) and three orbiting rune stones
+  (`v.runes`).
+
+Per-type extras in `BUILD`:
+- Basic: shields at L2, a muzzle brake at L3;
+- Cannon: an armour skirt from L2;
+- Sniper: an antenna at L3;
+- Tesla: a halo (`v.halo`) at L3.
+
+**Sidebar icons:** `towerIcon(type, grey)` renders a level-1 model once into a 64px canvas,
+in its own small scene at 4× size, then scales it down. The grey copy is for unaffordable
+towers. The stub returns null, and ui.js then draws the old colour swatch.
+
+**Enemy animation** (`ANIM`):
+- Scout: squash and stretch;
+- Soldier: swings its arms against its legs;
+- Tank: scrolls its treads (its own clone of `TREAD`) and sweeps its turret;
+- Speeder: banks on `v.turn`, the heading still to swing, set in `syncEnemies`;
+- Boss: 1.2× scale, glowing `crackLines`, and feet that stomp. A landing calls `stomp()`,
+  which makes a dust puff and a small `rumble` (skipped under reduced motion).
 
 **Freeze visuals:** the crystal pulses on each shot, and the shard tumbles and trails frost
 mist. Slowed enemies get a frost patch (`FROST` texture, fades with the last 0.4s
@@ -369,7 +419,8 @@ The selected-tower panel layout is `TOWER_INFO` (ui.js): height 276, a fixed 4-l
 slot at +83, priority buttons at +145 (rows 26 apart), upgrade at +199, sell at +234.
 `drawTowerInfo` and `handleTowerActionClick` both read it, so they can't drift apart.
 Hints wrap by measured width. Two-click sell confirmation with 2.5s timeout. Tower buttons
-show their stats right-aligned inside the button, on the name and cost rows.
+show the tower's 3D icon (`Render3D.towerIcon`) and their stats right-aligned inside the
+button, on the name and cost rows.
 
 `particles.js` now only holds `Particle`, `rand()` and `spawnVictoryParticles()` (110
 confetti pieces, drawn after `drawVictory()` so they appear on top of the overlay).

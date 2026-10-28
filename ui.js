@@ -130,16 +130,18 @@ function drawTowerButtons(ctx, x, startY, state) {
       sel ? '#3498db' : (ok ? '#2d3d60' : '#252535')
     );
 
-    ctx.fillStyle = ok ? def.color : '#555';
-    ctx.fillRect(x + 14, y + 9, 18, 18);
+    // The tower's 3D model (greyed when unaffordable), or a colour swatch without WebGL
+    const icon = Render3D.towerIcon(type, !ok);
+    if (icon) ctx.drawImage(icon, x + 10, y + 3, 32, 32);
+    else { ctx.fillStyle = ok ? def.color : '#555'; ctx.fillRect(x + 14, y + 9, 18, 18); }
 
     ctx.fillStyle = ok ? '#ecf0f1' : '#5a6a7a';
     ctx.font = 'bold 12px Arial'; ctx.textAlign = 'left';
-    ctx.fillText(type, x + 40, y + 17);
+    ctx.fillText(type, x + 44, y + 17);
 
     ctx.fillStyle = ok ? '#f1c40f' : '#555';
     ctx.font = '11px Arial';
-    ctx.fillText(`${def.cost}g`, x + 40, y + 30);
+    ctx.fillText(`${def.cost}g`, x + 44, y + 30);
 
     // Stats, right-aligned inside the button on the same two rows as name and cost
     ctx.fillStyle = ok ? '#7f8fa0' : '#4a5562'; ctx.font = '10px Arial'; ctx.textAlign = 'right';
@@ -325,7 +327,7 @@ function drawMapCountdown(ctx, state) {
 function drawHotkeyOverlay(ctx, state) {
   if (!state.showHotkeys) return;
 
-  const pw = 360, ph = 412;
+  const pw = 360, ph = 440;
   const px = (COLS * TILE_SIZE - pw) / 2;
   const py = (CANVAS_H - ph) / 2;
 
@@ -358,6 +360,7 @@ function drawHotkeyOverlay(ctx, state) {
     ['P',      'Pause / Resume'],
     ['Esc',    'Deselect tower'],
     ['F',      'Toggle FPS counter'],
+    ['B',      'Toggle glow (bloom)'],
     ['Right-drag', 'Rotate camera'],
     ['Scroll', 'Zoom camera'],
     ['C',      'Reset camera'],
