@@ -987,6 +987,7 @@ const Render3D = (() => {
   function stomp(foot) {
     foot.getWorldPosition(_tmp);
     puff(_tmp.x, 0.1, _tmp.z, 0.16, 0.6, '#9a8f80', 0.35, 0, 0, 0.15);
+    Audio.stomp((_tmp.x + COLS / 2) * T, (_tmp.z + ROWS / 2) * T);
     if (!reduceMotion) rumble = Math.max(rumble, 0.2);
   }
   const ANIM = {

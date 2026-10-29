@@ -85,6 +85,7 @@ function makeState(mapIndex = 0) {
     flashTimer:       0,
     showFPS:          false,
     showHotkeys:      false,
+    showSound:        false,    // sound panel (volumes, mute) open
     endlessMode:      selectedEndless,
   };
 }
@@ -189,6 +190,7 @@ function updateHoverTile() {
 document.addEventListener('keydown', e => {
   // Ignore if typing in an input
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  Audio.init();   // a key press is a user gesture too
 
   if (e.key === 'p' || e.key === 'P') {
     if (state.phase === 'fight' || state.phase === 'build' ||
@@ -199,7 +201,11 @@ document.addEventListener('keydown', e => {
     state.selectedTowerType = null;
     state.selectedTower     = null;
     state.showHotkeys       = false;
+    state.showSound         = false;
   }
+
+  // M — mute / unmute
+  if (e.key === 'm' || e.key === 'M') Audio.muted = !Audio.muted;
 
   // ? — toggle hotkey cheatsheet
   if (e.key === '?' || e.key === '/') {
@@ -261,6 +267,7 @@ canvas.addEventListener('pointermove', e => {
     canvas.style.cursor = hit ? 'pointer' : 'default';
   }
   else if (mx >= UI_X)               canvas.style.cursor = 'pointer';
+  else if (soundPanelShown(state) && soundPanelHit(mx, my)) canvas.style.cursor = 'pointer';
   else if (state.selectedTowerType)  canvas.style.cursor = 'crosshair';
   else                               canvas.style.cursor = 'default';
 });
@@ -395,6 +402,7 @@ function handleClick(mx, my, tile) {
   if (state.phase === 'menu') {
     const hit = menuHitAt(mx, my);
     if (!hit) return;
+    Audio.click();
     if (hit.kind === 'resume') resumeGame();
     else if (hit.kind === 'difficulty') { selectedDifficulty = hit.value; state.difficulty = selectedDifficulty; }
     else if (hit.kind === 'endless') { selectedEndless = !selectedEndless; state.endlessMode = selectedEndless; }
@@ -407,19 +415,36 @@ function handleClick(mx, my, tile) {
     const halfW = (COLS * TILE_SIZE) / 2;
     const cy    = CANVAS_H / 2;
     if (mx >= halfW - 170 && mx <= halfW - 15 && my >= cy + 110 && my <= cy + 154) {
-      restartCurrentMap();
+      Audio.click(); restartCurrentMap();
     }
     if (mx >= halfW + 15 && mx <= halfW + 170 && my >= cy + 110 && my <= cy + 154) {
-      goToMenu();
+      Audio.click(); goToMenu();
     }
     if (state.phase === 'victory' && mx >= halfW - 170 && mx <= halfW + 170 && my >= cy + 166 && my <= cy + 210) {
-      continueEndless();
+      Audio.click(); continueEndless();
     }
     return;
   }
 
+  // Sound panel: volume bars and mute. A click elsewhere closes it; on the map that
+  // click is used up, so closing the panel can't place a tower by accident.
+  if (state.showSound) {
+    const hit = soundPanelHit(mx, my);
+    if (hit) {
+      if (hit.kind === 'mute') Audio.muted = !Audio.muted;
+      else if (hit.kind === 'vol') Audio[hit.key] = hit.value;
+      if (hit.kind !== 'panel') Audio.click();
+      return;
+    }
+    if (!soundBtnAt(mx, my)) {
+      state.showSound = false;
+      if (mx < UI_X) return;
+    }
+  }
+
   // Sidebar
   if (mx >= UI_X) {
+    Audio.click();
     handleSidebarClick(mx, my);
     return;
   }
@@ -436,6 +461,7 @@ function handleClick(mx, my, tile) {
     }
     state.selectedTower     = hit;
     state.selectedTowerType = null;
+    Audio.click();
     return;
   }
 
@@ -488,7 +514,7 @@ function handleSidebarClick(mx, my) {
   // Mute (left half)
   if (mx >= UI_X + 10 && mx <= UI_X + 10 + half &&
       my >= CONTROLS_Y + 76 && my <= CONTROLS_Y + 102) {
-    Audio.muted = !Audio.muted; return;
+    state.showSound = !state.showSound; return;
   }
 
   // Menu (right half)
@@ -572,7 +598,7 @@ function placeTower(col, row) {
   const tower = new Tower(state.selectedTowerType, col, row);
   state.towers.push(tower);
   Render3D.onPlace(tower);
-  Audio.towerPlace();
+  Audio.towerPlace(tower.x, tower.y);
 }
 
 // ─── Map / game management ────────────────────────────────────────────────────
@@ -689,6 +715,9 @@ function update(rawDt) {
   }
   if (state.flashTimer > 0) state.flashTimer -= rawDt;
 
+  // Music, ambience, Laser and portal hums, countdown ticks (reads state only)
+  Audio.update(state, rawDt);
+
   // Tower visual timers (muzzle flash, recoil, lightning, placement bounce) — every phase
   for (const t of state.towers) t.tickVisuals(dt, rawDt);
 
@@ -758,6 +787,7 @@ function update(rawDt) {
       e.alive = true;
       state.enemies.push(e);
       Render3D.onSpawn(e);
+      if (e.type === 'Boss') Audio.bossRoar(e.x, e.y);
     }
 
     // Update enemies
@@ -779,7 +809,7 @@ function update(rawDt) {
         if (e.lastHitTower) e.lastHitTower.killCount++;
         e.reward = 0;
         Render3D.onDeath(e);
-        Audio.enemyDeath(e.type === 'Boss');
+        Audio.enemyDeath(e.type, e.x, e.y);
         if (e.type === 'Boss') { triggerShake(10, 0.7); triggerFlash(); }
       } else {
         survived.push(e);
@@ -803,9 +833,9 @@ function update(rawDt) {
 
     // Update towers
     for (const t of state.towers) {
-      const prevLen = state.projectiles.length;
+      const shots = t.shots;
       t.update(dt, state.enemies, state.projectiles, state.floatingTexts);
-      if (state.projectiles.length > prevLen) Audio.shoot(t.type);
+      if (t.shots > shots) Audio.shoot(t.type, t.x, t.y);
     }
 
     // Update projectiles
@@ -816,7 +846,8 @@ function update(rawDt) {
       if (!p.alive && wasAlive && p.aoe > 0) {
         triggerShake(4, 0.18);
         Render3D.onExplosion(p.x, p.y);
-      }
+        Audio.explosion(p.x, p.y);
+      } else if (!p.alive && wasAlive && (p.hit || p.source === 'Freeze')) Audio.hit(p.source, p.x, p.y);
       if (p.alive) nextP.push(p);
     }
     state.projectiles = nextP;
@@ -952,6 +983,8 @@ function draw(rawDt) {
     // Confetti on top of the overlay
     for (const p of state.particles) p.draw(ctx);
   }
+
+  drawSoundPanel(ctx, state);
 
   // Hotkey overlay (above everything except FPS)
   drawHotkeyOverlay(ctx, state);

@@ -444,11 +444,45 @@ confetti pieces, drawn after `drawVictory()` so they appear on top of the overla
 
 ## Audio
 
-`Audio` object in audio.js. Web Audio API, initialised on first user interaction.
-Methods: `shoot(type)`, `enemyDeath(isBoss)`, `lifeLost()`, `income()`, `upgrade()`,
-`sell()`, `towerPlace()`, `waveStart()`, `waveComplete()`, `gameOver()`, `victory()`,
-`startMusic()`, `stopMusic()`, `pauseMusic()`, `resumeMusic()`.
-`Audio.muted` getter/setter.
+`Audio` object in audio.js. Web Audio API, created on the first pointerup or key press.
+Everything is synthesised (no sound files):
+- **Graph:** each sound goes through its own `StereoPanner` into `sfxBus`, with a reverb send
+  (a generated impulse). Music goes through `musicLevel` (mood, pause duck, fades) into
+  `musicBus`. Both feed `master` (mute), then a compressor. One 4s noise buffer is shared by
+  every noise sound.
+- **Voices:** `MAX_VOICES` (48) caps sources playing at once. Ordinary effects are dropped
+  past it; stingers, UI and life-lost sounds (`ready(true)`) are not. Shots have a minimum
+  gap per tower type (`SHOT_GAP`) instead of one shared cooldown.
+- **Panning:** `panAt(x, y)` uses `Render3D.project`, so stereo follows the rotated camera.
+- **`Audio.update(state, rawDt)`** runs every frame from game.js `update()` and only reads
+  state. It drives:
+  - the music scheduler (16th-note steps, 0.2s lookahead);
+  - the mood: `menu` / `build` / `fight` / `boss` (Boss alive) / `end` (game over or victory);
+  - theme ambience (`AMBIENCE`: looping filtered noise plus random events such as birds or
+    lava crackle), rebuilt when the map's theme changes;
+  - the Laser hum (one shared loop, louder with more active beams);
+  - the portal hum (louder in fights, surges on a Boss entrance);
+  - countdown ticks for the last 3 seconds;
+  - the Healer shimmer.
+- **Music:** `MUSIC` holds per-theme root, scale, 4-chord progression, tempo and arpeggio
+  voice. Pads and arpeggio always; bass in fights; drums in fights; a brass riff with Bosses.
+  Mood changes wait for a bar line, except the fade to and from `end`.
+  `startMusic()` / `stopMusic()` restart the song; pause ducking follows `state.paused`.
+- **Events** (call sites in game.js, plus `stomp` in render3d.js's `stomp()`):
+  `shoot(type, x, y)` (when `t.shots` goes up, so Tesla is included), `hit(source, x, y)`,
+  `explosion(x, y)`, `enemyDeath(type, x, y)`, `bossRoar(x, y)`, `stomp(x, y)`,
+  `towerPlace(x, y)`, `lifeLost()`, `income()`, `upgrade()`, `sell()`, `waveStart()`,
+  `waveComplete()`, `gameOver()`, `victory()`, `click()` (menu, sidebar, overlay buttons,
+  selecting a tower).
+- **Settings:** `Audio.muted` (saved in `td_muted`; also suspends the context),
+  `Audio.musicVolume` / `Audio.sfxVolume` (0–1, saved in `td_vol`). The context is suspended
+  while the tab is hidden.
+- **Sound panel:** the sidebar's Sound button toggles `state.showSound`. The panel is drawn
+  over the map's bottom-right corner (`SOUND_PANEL`, `drawSoundPanel`, `soundPanelHit` in
+  ui.js). A click outside closes it, and on the map that click is used up. `M` mutes.
+- `Audio.debug` returns `{ctx, master, voices}` for console testing (e.g. attach an
+  `AnalyserNode` to `master` to measure levels; a fight peaks around 0.6 before the
+  compressor).
 
 ## Save System
 

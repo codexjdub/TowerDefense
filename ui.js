@@ -276,11 +276,12 @@ function drawControls(ctx, x, y, state) {
   ctx.fillText(speedLbl[state.speed] || '\u00BB 1x', mx2 + half / 2, y + 63);
   ctx.textAlign = 'left';
 
-  // Mute + Menu
+  // Sound (opens the sound panel) + Menu
   btn(ctx, x + 10, y + 76, half, 26,
-    Audio.muted ? '#4a1a1a' : '#1a2744', Audio.muted ? '#c0392b' : '#2d3d60', 4);
+    Audio.muted ? '#4a1a1a' : state.showSound ? '#2c1a4e' : '#1a2744',
+    state.showSound ? '#f1c40f' : Audio.muted ? '#c0392b' : '#2d3d60', 4);
   ctx.fillStyle = '#fff'; ctx.font = '11px Arial'; ctx.textAlign = 'center';
-  ctx.fillText(Audio.muted ? '\uD83D\uDD07 Off' : '\uD83D\uDD0A On', x + 10 + half / 2, y + 94);
+  ctx.fillText(Audio.muted ? '\uD83D\uDD07 Muted' : '\uD83D\uDD0A Sound', x + 10 + half / 2, y + 94);
 
   btn(ctx, mx2, y + 76, half, 26, '#2c2c4e', '#444', 4);
   ctx.fillStyle = '#bdc3c7';
@@ -294,6 +295,84 @@ function drawControls(ctx, x, y, state) {
   ctx.font = '10px Arial'; ctx.textAlign = 'center';
   ctx.fillText('\u2753  Keyboard shortcuts  (? key)', x + UI_WIDTH / 2, y + 124);
   ctx.textAlign = 'left';
+}
+
+// ─── Sound panel ──────────────────────────────────────────────────────────────
+// Opened from the Sound button; drawn over the map's bottom-right corner. Layout shared by
+// drawSoundPanel and soundPanelHit. rows: [label, Audio property, centre y]
+const SOUND_PANEL = {
+  w: 224, h: 132,
+  rows: [['Music', 'musicVolume', 52], ['Effects', 'sfxVolume', 82]],
+  minusX: 64, barX: 92, barW: 84, plusX: 184, btn: 22,
+  muteY: 100,
+};
+const soundPanelX = () => UI_X - SOUND_PANEL.w - 8;
+const soundPanelY = () => CANVAS_H - SOUND_PANEL.h - 10;
+const soundPanelShown = state => state.showSound &&
+  state.phase !== 'menu' && state.phase !== 'gameover' && state.phase !== 'victory';
+
+// The Sound button in the sidebar controls (drawn in drawControls)
+function soundBtnAt(mx, my) {
+  const half = (UI_WIDTH - 24) / 2;
+  return mx >= UI_X + 10 && mx <= UI_X + 10 + half && my >= CONTROLS_Y + 76 && my <= CONTROLS_Y + 102;
+}
+
+// What's under a point: {kind:'vol', key, value} | {kind:'mute'} | {kind:'panel'} | null
+function soundPanelHit(mx, my) {
+  const P = SOUND_PANEL, x = soundPanelX(), y = soundPanelY();
+  if (mx < x || mx > x + P.w || my < y || my > y + P.h) return null;
+  for (const [, key, ry] of P.rows) {
+    if (my < y + ry - 12 || my > y + ry + 12) continue;
+    const cur = Audio[key];
+    if (mx >= x + P.minusX && mx <= x + P.minusX + P.btn) return { kind: 'vol', key, value: Math.round(cur * 10 - 1) / 10 };
+    if (mx >= x + P.plusX  && mx <= x + P.plusX + P.btn)  return { kind: 'vol', key, value: Math.round(cur * 10 + 1) / 10 };
+    if (mx >= x + P.barX - 4 && mx <= x + P.barX + P.barW + 4) {
+      const k = Math.min(1, Math.max(0, (mx - x - P.barX) / P.barW));
+      return { kind: 'vol', key, value: Math.round(k * 20) / 20 };
+    }
+  }
+  if (my >= y + P.muteY && my <= y + P.muteY + 22 && mx >= x + 14 && mx <= x + P.w - 14) return { kind: 'mute' };
+  return { kind: 'panel' };
+}
+
+function drawSoundPanel(ctx, state) {
+  if (!soundPanelShown(state)) return;
+  const P = SOUND_PANEL, x = soundPanelX(), y = soundPanelY();
+  ctx.save();
+  roundRect(ctx, x, y, P.w, P.h, 8);
+  ctx.fillStyle = 'rgba(8,10,22,0.94)'; ctx.fill();
+  ctx.strokeStyle = '#3d2d6e'; ctx.lineWidth = 2; ctx.stroke();
+
+  ctx.fillStyle = '#f1c40f'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'left';
+  ctx.fillText('SOUND', x + 14, y + 24);
+  ctx.fillStyle = '#5a6a7a'; ctx.font = '10px Arial'; ctx.textAlign = 'right';
+  ctx.fillText('M to mute', x + P.w - 14, y + 24);
+
+  for (const [label, key, ry] of P.rows) {
+    const cy = y + ry, v = Audio[key], dim = Audio.muted;
+    ctx.fillStyle = dim ? '#5a6a7a' : '#bdc3c7'; ctx.font = '11px Arial'; ctx.textAlign = 'left';
+    ctx.fillText(label, x + 14, cy + 4);
+    for (const [bx, sym] of [[P.minusX, '\u2212'], [P.plusX, '+']]) {
+      btn(ctx, x + bx, cy - 10, P.btn, 20, '#1a2744', '#2d3d60', 4);
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 13px Arial'; ctx.textAlign = 'center';
+      ctx.fillText(sym, x + bx + P.btn / 2, cy + 5);
+    }
+    roundRect(ctx, x + P.barX, cy - 5, P.barW, 10, 5);
+    ctx.fillStyle = '#16213e'; ctx.fill();
+    if (v > 0) {
+      roundRect(ctx, x + P.barX, cy - 5, Math.max(10, P.barW * v), 10, 5);
+      ctx.fillStyle = dim ? '#4a4a5a' : '#8e44ad'; ctx.fill();
+    }
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 9px Arial'; ctx.textAlign = 'center';
+    ctx.fillText(Math.round(v * 100) + '%', x + P.barX + P.barW / 2, cy + 3);
+  }
+
+  btn(ctx, x + 14, y + P.muteY, P.w - 28, 22,
+    Audio.muted ? '#4a1a1a' : '#1a2744', Audio.muted ? '#c0392b' : '#2d3d60', 4);
+  ctx.fillStyle = '#fff'; ctx.font = '11px Arial'; ctx.textAlign = 'center';
+  ctx.fillText(Audio.muted ? '\uD83D\uDD07 Muted \u2014 click to unmute' : '\uD83D\uDD0A Sound on \u2014 click to mute',
+    x + P.w / 2, y + P.muteY + 15);
+  ctx.restore();
 }
 
 // ─── Map countdown overlay ────────────────────────────────────────────────────
@@ -327,7 +406,7 @@ function drawMapCountdown(ctx, state) {
 function drawHotkeyOverlay(ctx, state) {
   if (!state.showHotkeys) return;
 
-  const pw = 360, ph = 440;
+  const pw = 360, ph = 468;
   const px = (COLS * TILE_SIZE - pw) / 2;
   const py = (CANVAS_H - ph) / 2;
 
@@ -361,6 +440,7 @@ function drawHotkeyOverlay(ctx, state) {
     ['Esc',    'Deselect tower'],
     ['F',      'Toggle FPS counter'],
     ['B',      'Toggle glow (bloom)'],
+    ['M',      'Mute / unmute sound'],
     ['Right-drag', 'Rotate camera'],
     ['Scroll', 'Zoom camera'],
     ['C',      'Reset camera'],
