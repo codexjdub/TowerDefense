@@ -158,7 +158,6 @@ function resumeGame() {
     tower.priority = t.priority;
     state.towers.push(tower);
   }
-  Audio.startMusic();
 }
 
 // ─── Input helpers ────────────────────────────────────────────────────────────
@@ -267,7 +266,8 @@ canvas.addEventListener('pointermove', e => {
     canvas.style.cursor = hit ? 'pointer' : 'default';
   }
   else if (mx >= UI_X)               canvas.style.cursor = 'pointer';
-  else if (soundPanelShown(state) && soundPanelHit(mx, my)) canvas.style.cursor = 'pointer';
+  else if (soundPanelShown(state) && soundPanelHit(mx, my))   // only its controls are clickable
+    canvas.style.cursor = soundPanelHit(mx, my).kind === 'panel' ? 'default' : 'pointer';
   else if (state.selectedTowerType)  canvas.style.cursor = 'crosshair';
   else                               canvas.style.cursor = 'default';
 });
@@ -511,11 +511,8 @@ function handleSidebarClick(mx, my) {
     state.speed = state.speed >= 3 ? 1 : state.speed + 1; return;
   }
 
-  // Mute (left half)
-  if (mx >= UI_X + 10 && mx <= UI_X + 10 + half &&
-      my >= CONTROLS_Y + 76 && my <= CONTROLS_Y + 102) {
-    state.showSound = !state.showSound; return;
-  }
+  // Sound panel (left half)
+  if (soundBtnAt(mx, my)) { state.showSound = !state.showSound; return; }
 
   // Menu (right half)
   if (mx >= mx2 && mx <= mx2 + half &&
@@ -607,7 +604,6 @@ function startMap(index) {
   state          = makeState(index);
   state.phase    = 'build';
   state.mapIndex = index;
-  Audio.startMusic();
 }
 
 function selectMap(index)      { startMap(index); }
@@ -623,9 +619,7 @@ function goToMenu() {
 
 function togglePause() {
   if (state.phase === 'menu' || state.phase === 'gameover' || state.phase === 'victory') return;
-  state.paused = !state.paused;
-  if (state.paused) Audio.pauseMusic();
-  else              Audio.resumeMusic();
+  state.paused = !state.paused;   // Audio.update ducks the music from state.paused
 }
 
 function startWave() {

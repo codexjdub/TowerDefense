@@ -1592,8 +1592,10 @@ const Render3D = (() => {
       v.turn = Math.atan2(Math.sin(turn), Math.cos(turn));   // heading still to swing (Speeder banks on it)
       v.yaw = lerpAngle(v.yaw, -e.moveAngle, kYaw);
       v.group.rotation.y = v.yaw;
-      // Walk / hover cycles run at the enemy's current speed, so slowed enemies visibly trudge
-      const adt = dt * (e.slowFactor || 1);
+      // Walk / hover cycles run at the enemy's current speed, so slowed enemies visibly trudge.
+      // Once the game is over they no longer move, so they stop walking (and Bosses stomping).
+      const over = state.phase === 'gameover' || state.phase === 'victory';
+      const adt = over ? 0 : dt * (e.slowFactor || 1);
       v.animT += adt;
       ANIM[e.type](v, v.animT, adt);
       // Hop from a Cannon blast (onExplosion sets hop = 1)

@@ -2,8 +2,8 @@
 // No sound files. Graph:
 //   sound → panner ─┬→ sfxBus ──────────┐
 //                   └→ send → sfxRev ──→ sfxBus
-//   music → musicLevel ─┬→ musicBus ────┼→ master (mute) → compressor → speakers
-//                       └→ musicRev ──→ musicBus
+//   music → song bus → musicLevel ─┬→ musicBus ─┼→ master (mute) → compressor → speakers
+//                                  └→ musicRev ─→ musicBus
 //   ambience / hums → ambBus → sfxBus
 const Audio = (() => {
   let ctx = null;
@@ -16,7 +16,7 @@ const Audio = (() => {
     if (v) vol = { music: clamp01(v.music), sfx: clamp01(v.sfx) };
   } catch (_) {}
 
-  let master, sfxBus, musicBus, musicLevel, ambBus, sfxRev, musicRev, padFilter, noiseBuf;
+  let master, sfxBus, musicBus, musicLevel, ambBus, sfxRev, musicRev, noiseBuf;
   const NOISE_LEN = 4;          // seconds of cached white noise, shared by every noise sound
   const MAX_VOICES = 48;        // sources playing at once; ordinary effects are dropped past this
   let voices = 0;
@@ -45,9 +45,6 @@ const Audio = (() => {
     sfxRev = ctx.createConvolver();   sfxRev.buffer = ir;   sfxRev.connect(gain(0.6, sfxBus));
     musicRev = ctx.createConvolver(); musicRev.buffer = ir; musicRev.connect(gain(0.7, musicBus));
 
-    padFilter = ctx.createBiquadFilter();
-    padFilter.type = 'lowpass'; padFilter.frequency.value = 800; padFilter.Q.value = 0.7;
-    padFilter.connect(musicLevel); padFilter.connect(gain(0.5, musicRev));
 
     buildLoops();
     if (muted) ctx.suspend();
@@ -341,6 +338,22 @@ const Audio = (() => {
   const hz = m => 440 * Math.pow(2, (m - 69) / 12);
 
   let song = MUSIC.meadow, songTheme = null, step = 0, nextT = 0, mood = null, ducked = false;
+  // The current song's output: `dry` for every note, `pad` (lowpass, brightness per mood) and
+  // `send` (its reverb) for the pads. A restart fades the old bus out, so notes the old song
+  // already scheduled (pads last about 5s) die away instead of clashing with the new key.
+  let songBus = null;
+  function newSongBus() {
+    const now = ctx.currentTime;
+    if (songBus) {
+      const old = songBus;
+      for (const g of [old.dry, old.send]) g.gain.setTargetAtTime(0, now, 0.1);
+      setTimeout(() => { old.dry.disconnect(); old.send.disconnect(); }, 1000);
+    }
+    const dry = gain(1, musicLevel), send = gain(0.5, musicRev), pad = ctx.createBiquadFilter();
+    pad.type = 'lowpass'; pad.Q.value = 0.7; pad.frequency.value = MOODS[mood || 'menu'].pad;
+    pad.connect(dry); pad.connect(send);
+    songBus = { dry, send, pad };
+  }
 
   function chordOf(deg) {
     const sc = SCALES[song.scale];
@@ -351,7 +364,7 @@ const Audio = (() => {
     for (const det of [-7, 7]) {
       const o = ctx.createOscillator(), g = ctx.createGain();
       o.type = 'sawtooth'; o.frequency.value = hz(m); o.detune.value = det;
-      o.connect(g); g.connect(padFilter);
+      o.connect(g); g.connect(songBus.pad);
       g.gain.setValueAtTime(0, t);
       g.gain.linearRampToValueAtTime(0.03, t + 0.8);
       g.gain.setValueAtTime(0.03, t + len - 0.6);
@@ -380,11 +393,13 @@ const Audio = (() => {
   }
 
   function playStep(i, t) {
-    if (mood === 'end') return;
+    if (mood === 'end' || !songBus) return;
     const s = i % 16, bar = Math.floor(i / 16), dur = 60 / song.bpm / 4;
     const ch = chordOf(song.prog[Math.floor(bar / 2) % 4]);
     const fight = mood === 'fight' || mood === 'boss', boss = mood === 'boss';
-    const m = musicLevel, d = out(0, undefined, 0.25, m, musicRev);
+    const m = songBus.dry;
+    let dOut = null;                         // created only on steps that play a lead note
+    const d = () => dOut || (dOut = out(0, undefined, 0.25, m, musicRev));
 
     if (s === 0 && bar % 2 === 0) for (const n of ch) pad(n - 12, t, 32 * dur);
 
@@ -392,7 +407,7 @@ const Audio = (() => {
     const every = mood === 'menu' ? 4 : 2;
     if (s % every === 0) {
       const k = ARP[(s / every + bar * 2) % 8];
-      lead(d, ch[k] + (k === 2 && bar % 4 === 3 ? 12 : 0) + (mood === 'menu' ? 0 : 12), t, s === 0);
+      lead(d(), ch[k] + (k === 2 && bar % 4 === 3 ? 12 : 0) + (mood === 'menu' ? 0 : 12), t, s === 0);
     }
 
     // Bass
@@ -416,7 +431,7 @@ const Audio = (() => {
     if (boss) {
       const at = [0, 3, 6, 10].indexOf(s);
       if (at >= 0) for (const det of [-6, 6])
-        osc(d, t, { f: hz(ch[at === 3 ? 2 : at === 2 ? 1 : 0] - 12), type: 'sawtooth', detune: det,
+        osc(d(), t, { f: hz(ch[at === 3 ? 2 : at === 2 ? 1 : 0] - 12), type: 'sawtooth', detune: det,
                     dur: at === 3 ? 0.5 : 0.24, vol: 0.05, at: 0.02, lp: 600, lp2: 1500 });
     }
   }
@@ -432,17 +447,26 @@ const Audio = (() => {
   function applyMood(now) {
     const M = MOODS[mood];
     musicLevel.gain.setTargetAtTime(M.level * (ducked ? 0.35 : 1), now, mood === 'end' ? 0.5 : 0.3);
-    padFilter.frequency.setTargetAtTime(M.pad, now, 0.8);
+    if (songBus) songBus.pad.frequency.setTargetAtTime(M.pad, now, 0.8);
     ambBus.gain.setTargetAtTime(M.amb, now, 0.8);
   }
 
   function restartSong() {
     step = 0;
-    if (ctx) nextT = ctx.currentTime + 0.1;
+    if (!ctx) return;
+    nextT = ctx.currentTime + 0.1;
+    newSongBus();
   }
 
   // ─── Per-frame driver ────────────────────────────────────────────────────────
-  let lastTick = 0, healT = 1;
+  let lastTick = 0, healT = 1, portalPanT = 0;
+  // Glide a loop's param toward v, scheduling only when the target actually changes
+  const targets = new WeakMap();
+  function glide(param, v, tc, eps = 0.002) {
+    if (!param || Math.abs((targets.has(param) ? targets.get(param) : NaN) - v) <= eps) return;
+    targets.set(param, v);
+    param.setTargetAtTime(v, ctx.currentTime, tc);
+  }
   function update(state, rawDt) {
     if (!live()) return;
     const now = ctx.currentTime;
@@ -480,16 +504,18 @@ const Audio = (() => {
     const playing = !state.paused && ph === 'fight';
     let beams = 0, pan = 0;
     if (playing) for (const t of state.towers) if (t.beamActive) { beams++; pan += panAt(t.x, t.y); }
-    laser.gain.gain.setTargetAtTime(beams ? 0.04 + 0.02 * Math.min(beams, 4) : 0, now, 0.04);
-    if (beams && laser.pan.pan) laser.pan.pan.setTargetAtTime(pan / beams, now, 0.1);
+    glide(laser.gain.gain, beams ? 0.04 + 0.02 * Math.min(beams, 4) : 0, 0.04);
+    if (beams) glide(laser.pan.pan, pan / beams, 0.1, 0.02);
 
-    // Portal hum, swelling in fights and after a Boss entrance
+    // Portal hum, swelling in fights and after a Boss entrance. Its pan follows the camera,
+    // re-checked a few times a second.
     const wp = PATH_WAYPOINTS[0];
-    if (portal.pan.pan && wp) portal.pan.pan.setTargetAtTime(panAt(wp.x, wp.y), now, 0.3);
+    portalPanT -= rawDt;
+    if (wp && portalPanT <= 0) { portalPanT = 0.25; glide(portal.pan.pan, panAt(wp.x, wp.y), 0.3, 0.02); }
     portal.surge = Math.max(0, portal.surge - rawDt * 0.5);
     const hum = ph === 'menu' || ph === 'gameover' || ph === 'victory' ? 0
               : (bossAlive ? 0.09 : ph === 'fight' ? 0.06 : 0.03) + portal.surge * 0.2;
-    portal.gain.gain.setTargetAtTime(hum, now, 0.5);
+    glide(portal.gain.gain, hum, 0.5);
 
     // Countdown ticks for the last three seconds
     if (ph === 'countdown' && !state.paused) {
@@ -500,7 +526,7 @@ const Audio = (() => {
         nz(d, now, { dur: 0.02, vol: 0.05, ft: 'highpass', f: 4000 });
       }
       lastTick = c;
-    } else lastTick = 0;
+    } else if (ph !== 'countdown') lastTick = 0;   // kept while paused, so resuming doesn't re-tick
 
     // Healer shimmer every couple of seconds while one is on the field
     if (playing) {
@@ -547,10 +573,9 @@ const Audio = (() => {
     set sfxVolume(v) { setVolume('sfx', v); },
 
     init, update,
-    startMusic: restartSong,
+    // Restart the song from bar 1 (quitting to the menu). Entering a map, pausing and the
+    // end screens are handled by update() from the game state.
     stopMusic: restartSong,
-    pauseMusic()  { ducked = true;  if (ctx) applyMood(ctx.currentTime); },
-    resumeMusic() { ducked = false; if (ctx) applyMood(ctx.currentTime); },
 
     shoot(type, x, y) {
       if (!ready() || !SHOTS[type]) return;

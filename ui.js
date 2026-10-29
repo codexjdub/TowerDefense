@@ -324,8 +324,9 @@ function soundPanelHit(mx, my) {
   for (const [, key, ry] of P.rows) {
     if (my < y + ry - 12 || my > y + ry + 12) continue;
     const cur = Audio[key];
-    if (mx >= x + P.minusX && mx <= x + P.minusX + P.btn) return { kind: 'vol', key, value: Math.round(cur * 10 - 1) / 10 };
-    if (mx >= x + P.plusX  && mx <= x + P.plusX + P.btn)  return { kind: 'vol', key, value: Math.round(cur * 10 + 1) / 10 };
+    // −/+ step to the next 10% mark (the bar sets 5% steps, so 35% goes to 30% or 40%)
+    if (mx >= x + P.minusX && mx <= x + P.minusX + P.btn) return { kind: 'vol', key, value: Math.max(0, Math.ceil(cur * 10 - 1e-6) - 1) / 10 };
+    if (mx >= x + P.plusX  && mx <= x + P.plusX + P.btn)  return { kind: 'vol', key, value: Math.min(10, Math.floor(cur * 10 + 1e-6) + 1) / 10 };
     if (mx >= x + P.barX - 4 && mx <= x + P.barX + P.barW + 4) {
       const k = Math.min(1, Math.max(0, (mx - x - P.barX) / P.barW));
       return { kind: 'vol', key, value: Math.round(k * 20) / 20 };

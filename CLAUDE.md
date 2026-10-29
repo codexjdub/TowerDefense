@@ -162,6 +162,9 @@ visuals are in render3d.js.
 test each enemy against the beam line. `tower.beamActive` drives the 3D beam; game.js
 clears it on game over, since towers stop updating then.
 
+**Projectiles** fly to their target's last known position (`p.tx`/`p.ty`), so a Cannon
+shell whose target dies first still lands where it was aimed.
+
 **Tesla** fires a burst then chains to up to 3 nearby enemies within `1.5*TILE_SIZE`.
 `TESLA_CHAIN_MULTS = [0.6, 0.35, 0.2]` — damage decay per hop.
 `tower.chainPoints` stores the bolt path; `tower.chainTimer` drives the visual fade (0.18s).
@@ -352,6 +355,9 @@ towers. The stub returns null, and ui.js then draws the old colour swatch.
 - Boss: 1.2× scale, glowing `crackLines`, and feet that stomp. A landing calls `stomp()`,
   which makes a dust puff and a small `rumble` (skipped under reduced motion).
 
+Once the game is over (game over or victory) the remaining enemies' animations freeze, so
+they don't walk in place or stomp under the end screen.
+
 **Freeze visuals:** the crystal pulses on each shot, and the shard tumbles and trails frost
 mist. Slowed enemies get a frost patch (`FROST` texture, fades with the last 0.4s
 of `slowTimer`), a blue tint and falling snowflakes. Each enemy view has its own
@@ -467,7 +473,11 @@ Everything is synthesised (no sound files):
 - **Music:** `MUSIC` holds per-theme root, scale, 4-chord progression, tempo and arpeggio
   voice. Pads and arpeggio always; bass in fights; drums in fights; a brass riff with Bosses.
   Mood changes wait for a bar line, except the fade to and from `end`.
-  `startMusic()` / `stopMusic()` restart the song; pause ducking follows `state.paused`.
+  Each song plays through its own bus (`newSongBus`); a restart fades the old one out so its
+  already-scheduled pads don't clash with the new key. `update()` restarts the song when
+  leaving the menu or an end screen and when the theme changes; `stopMusic()` restarts it on
+  quitting to the menu. Pause ducking follows `state.paused`. Loop levels and pans go
+  through `glide()`, which only schedules when the target changes.
 - **Events** (call sites in game.js, plus `stomp` in render3d.js's `stomp()`):
   `shoot(type, x, y)` (when `t.shots` goes up, so Tesla is included), `hit(source, x, y)`,
   `explosion(x, y)`, `enemyDeath(type, x, y)`, `bossRoar(x, y)`, `stomp(x, y)`,

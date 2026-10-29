@@ -60,6 +60,8 @@ class Projectile {
     this.alive  = true;
     this.size   = aoe > 0 ? 7 * _TS : 4 * _TS;
     this.hit    = false;   // set when it reaches its target (read by render3d for impact effects)
+    this.tx     = target.x;   // target's last known position: a shell whose target dies lands there
+    this.ty     = target.y;
   }
 
   update(dt, enemies, floatingTexts) {
@@ -67,8 +69,9 @@ class Projectile {
 
     if (!this.target.alive && this.aoe === 0) { this.alive = false; return; }
 
-    const tx   = this.target.alive ? this.target.x : this.x;
-    const ty   = this.target.alive ? this.target.y : this.y;
+    if (this.target.alive) { this.tx = this.target.x; this.ty = this.target.y; }
+    const tx   = this.tx;
+    const ty   = this.ty;
     const dx   = tx - this.x;
     const dy   = ty - this.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
