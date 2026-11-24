@@ -228,7 +228,7 @@ document.addEventListener('keydown', e => {
     if (state.phase === 'build' || state.phase === 'countdown') startWave();
   }
 
-  // 1–6 — select tower type
+  // 1–7 — select tower type
   if (e.key >= '1' && e.key <= '7') {
     const types = Object.keys(TOWER_DEFS);
     const idx   = parseInt(e.key) - 1;

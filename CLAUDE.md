@@ -387,7 +387,7 @@ All drawn with `ctx.save/restore` on `#gameCanvas`. No DOM UI.
 
 Draw order in `draw()`: 3D render → clear 2D → menu (returns early) → HP bars / damage
 numbers → flash → danger border → countdown → sidebar → boss HP bar → wave banner →
-pause → game over / victory (+ confetti) → hotkeys → FPS.
+pause → game over / victory (+ confetti) → sound panel → hotkeys → FPS.
 
 Click detection mirrors drawing coordinates exactly (same constants, same math).
 `handleClick()` (menu branch at the top, then the map), `handleSidebarClick()`,
@@ -491,7 +491,7 @@ Everything is synthesised (no sound files):
   over the map's bottom-right corner (`SOUND_PANEL`, `drawSoundPanel`, `soundPanelHit` in
   ui.js). A click outside closes it, and on the map that click is used up. `M` mutes.
 - `Audio.debug` returns `{ctx, master, voices}` for console testing (e.g. attach an
-  `AnalyserNode` to `master` to measure levels; a fight peaks around 0.6 before the
+  `AnalyserNode` to `master` to measure levels; a busy fight peaks around 0.6–0.85 before the
   compressor).
 
 ## Save System

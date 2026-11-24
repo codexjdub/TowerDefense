@@ -13,9 +13,10 @@ connection is needed. Requires a browser with WebGL.
 ## Features
 
 - **12 maps** — S-Curve, Zigzag, Serpentine, Switchback, Crown, Figure-8, Twisted, Spiral,
-  Descent, Horseshoe, Crossroads, Sprint
+  Descent, Horseshoe, Crossroads, Sprint — in 5 themes: meadow, autumn, desert, snow, volcanic
 - **3 difficulty modes** — Beginner, Normal, Veteran
-- **20 hand-crafted waves** + unlimited **Endless mode** with procedurally generated waves
+- **20 hand-crafted waves** + unlimited **Endless mode** with procedurally generated waves;
+  after a win you can carry on into Endless with the same towers and gold
 - **7 tower types:**
 
 | Tower | Description |
@@ -34,8 +35,11 @@ connection is needed. Requires a browser with WebGL.
 - Per-tower damage and kill tracking
 - Auto-save between waves with resume support
 - Local leaderboard (regular + endless)
-- 3D island map with a rotatable, zoomable camera
+- 3D island map with a rotatable, zoomable camera, glowing lights (bloom) and a day/night
+  cycle on the menu
 - Explosions, sparks, laser beams and chain lightning, floating damage numbers, screen shake
+- Generated music that changes with each theme and builds up in fights and Boss waves, plus
+  ambience, stereo sound effects, and separate music and effects volume
 
 ## Controls
 
@@ -49,10 +53,13 @@ connection is needed. Requires a browser with WebGL.
 | Right-drag | Rotate camera |
 | Scroll | Zoom camera |
 | `C` | Reset camera |
+| `B` | Toggle glow (bloom) |
+| `M` | Mute / unmute |
 | `F` | Toggle FPS counter |
 | `?` | Toggle hotkey reference |
 
-Right-click (without dragging) or `Esc` cancels tower placement.
+Right-click (without dragging) or `Esc` cancels tower placement. The **Sound** button in the
+sidebar opens the volume controls.
 
 **Touch:** tap to select and place, drag with one finger to rotate the camera, pinch to
 zoom. Hold a finger still on the map to preview a placement before lifting.
@@ -61,13 +68,14 @@ zoom. Hold a finger still on the map to preview a placement before lifting.
 
 ```
 index.html            entry point (3D canvas under a 2D UI canvas)
-audio.js              sound effects and music (Web Audio API)
+audio.js              generated sound effects, music and ambience (Web Audio API, no files)
 particles.js          victory confetti
 map.js                tile grid, path waypoints, map configs
 enemies.js            enemy definitions and movement
 towers.js             tower definitions, projectiles, Laser/Tesla special logic
 waves.js              wave definitions, endless generator, income formula
 vendor/three.min.js   Three.js r128 (MIT license)
+vendor/*Pass.js, …    Three.js r128 bloom post-processing (UnrealBloomPass and helpers)
 render3d.js           3D scene: map, models, effects, camera, tile picking
 ui.js                 sidebar, overlays, leaderboard, menus
 game.js               game loop, state, input handling
